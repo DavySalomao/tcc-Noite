@@ -18,7 +18,7 @@ export default function App() {
   const [tempHour, setTempHour] = useState("");
   const [tempMinute, setTempMinute] = useState("");
 
-  const ESP_IP = "http://192.168.0.4";
+  const ESP_IP = "http://192.168.137.56";
 
   const atualizarStatus = async () => {
     try {
@@ -137,7 +137,7 @@ export default function App() {
             <Switch
               value={led.ligado}
               onValueChange={(val) => toggleLED(led.id, val)}
-              trackColor={{ false: "#555", true: "#34c759" }}
+              trackColor={{ false: "#555", true: "#441AFD" }}
               thumbColor={"#fff"}
             />
           </View>
@@ -220,7 +220,7 @@ export default function App() {
                 <Text style={styles.btnText}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: "#007aff", flex: 1 }]}
+                style={[styles.btn, { backgroundColor: "#2C674D", flex: 1 }]}
                 onPress={salvarPicker}
               >
                 <Text style={styles.btnText}>OK</Text>
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     color: "#aaa",
   },
   card: {
-    backgroundColor: "#5b2b26",
+    backgroundColor: "#41A579",
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
@@ -283,8 +283,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
     alignItems: "center",
   },
-  scheduleBtn: { backgroundColor: "#007aff", flex: 1 },
-  applyBtn: { backgroundColor: "#5856d6", marginTop: 16 },
+  scheduleBtn: { backgroundColor: "#2C674D", flex: 1 },
+  applyBtn: { backgroundColor: "#2C674D", marginTop: 16 },
   btnText: {
     color: "#fff",
     fontWeight: "600",
