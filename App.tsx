@@ -18,7 +18,7 @@ export default function App() {
   const [tempHour, setTempHour] = useState("");
   const [tempMinute, setTempMinute] = useState("");
 
-  const ESP_IP = "http://192.168.137.56";
+  const ESP_IP = "http://192.168.137.28";
 
   const atualizarStatus = async () => {
     try {
@@ -89,10 +89,23 @@ export default function App() {
     let hora = parseInt(tempHour || "0", 10);
     let minuto = parseInt(tempMinute || "0", 10);
 
-    // Validação
-    if (hora > 23) hora = 23;
-    if (minuto > 59) minuto = 59;
+    // --- Validação rígida de faixa ---
+    if (isNaN(hora) || isNaN(minuto)) {
+      setStatus("Horário inválido — insira números válidos");
+      return;
+    }
 
+    if (hora < 0 || hora > 23) {
+      setStatus("Hora inválida (use 00–23)");
+      return;
+    }
+
+    if (minuto < 0 || minuto > 59) {
+      setStatus("Minuto inválido (use 00–59)");
+      return;
+    }
+
+    // --- Formatação padrão ---
     const horaStr = hora.toString().padStart(2, "0");
     const minutoStr = minuto.toString().padStart(2, "0");
 
@@ -105,6 +118,7 @@ export default function App() {
     });
 
     setShowPicker(null);
+    setStatus(`Horário ${showPicker.tipo} definido: ${horaStr}:${minutoStr}`);
   };
 
   const adicionarNumero = (num) => {
@@ -197,7 +211,7 @@ export default function App() {
 
             {/* Teclado numérico */}
             <View style={styles.keypad}>
-              {["1","2","3","4","5","6","7","8","9","0"].map((num) => (
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map((num) => (
                 <TouchableOpacity
                   key={num}
                   style={styles.key}
