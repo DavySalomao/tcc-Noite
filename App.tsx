@@ -7,35 +7,28 @@ import {
   TouchableOpacity,
   Switch,
   Modal,
+  Image
 } from "react-native";
 
 export default function App() {
   const [status, setStatus] = useState("Desconhecido");
   const [horaAtual, setHoraAtual] = useState("");
-  const [leds, setLeds] = useState([]);
-  const [showPicker, setShowPicker] = useState(null); // {id,tipo}
-  const [selectedTimes, setSelectedTimes] = useState({});
   const [tempHour, setTempHour] = useState("");
   const [tempMinute, setTempMinute] = useState("");
+  
+  // Estados do alarme
+  const [alarmTime, setAlarmTime] = useState({ hour: "", minute: "" });
+  const [alarmSet, setAlarmSet] = useState(false);
+  const [showAlarmPicker, setShowAlarmPicker] = useState(false);
 
-  const ESP_IP = "http://192.168.137.28";
+  const ESP_IP = "http://192.168.0.4";
 
   const atualizarStatus = async () => {
     try {
       const res = await fetch(`${ESP_IP}/status`);
       const data = await res.json();
       setHoraAtual(data.horaAtual);
-      setLeds(data.leds);
       setStatus("OK");
-
-      const novo = {};
-      data.leds.forEach((led) => {
-        novo[led.id] = {
-          inicio: led.inicio || "--:--",
-          fim: led.fim || "--:--",
-        };
-      });
-      setSelectedTimes(novo);
     } catch {
       setStatus("Erro ao conectar");
     }
@@ -47,79 +40,7 @@ export default function App() {
     return () => clearInterval(intervalo);
   }, []);
 
-  const toggleLED = async (id, value) => {
-    try {
-      await fetch(`${ESP_IP}/${value ? "on" : "off"}${id}`);
-      atualizarStatus();
-    } catch {
-      setStatus("Erro ao conectar");
-    }
-  };
 
-  const configurarPeriodo = async (id) => {
-    const inicio = selectedTimes[id]?.inicio;
-    const fim = selectedTimes[id]?.fim;
-    if (!inicio || !fim || inicio === "--:--" || fim === "--:--") {
-      setStatus(`LED ${id}: selecione início e fim`);
-      return;
-    }
-
-    const [hi, mi] = inicio.split(":").map((x) => parseInt(x, 10));
-    const [hf, mf] = fim.split(":").map((x) => parseInt(x, 10));
-
-    try {
-      const res = await fetch(
-        `${ESP_IP}/setperiodo${id}?hi=${hi}&mi=${mi}&hf=${hf}&mf=${mf}`
-      );
-      const data = await res.json();
-      setStatus(data.status || `LED ${id}: Período configurado`);
-      atualizarStatus();
-    } catch {
-      setStatus(`LED ${id}: erro ao configurar período`);
-    }
-  };
-
-  const abrirPicker = (id, tipo) => {
-    setTempHour("");
-    setTempMinute("");
-    setShowPicker({ id, tipo });
-  };
-
-  const salvarPicker = () => {
-    let hora = parseInt(tempHour || "0", 10);
-    let minuto = parseInt(tempMinute || "0", 10);
-
-    // --- Validação rígida de faixa ---
-    if (isNaN(hora) || isNaN(minuto)) {
-      setStatus("Horário inválido — insira números válidos");
-      return;
-    }
-
-    if (hora < 0 || hora > 23) {
-      setStatus("Hora inválida (use 00–23)");
-      return;
-    }
-
-    if (minuto < 0 || minuto > 59) {
-      setStatus("Minuto inválido (use 00–59)");
-      return;
-    }
-
-    // --- Formatação padrão ---
-    const horaStr = hora.toString().padStart(2, "0");
-    const minutoStr = minuto.toString().padStart(2, "0");
-
-    setSelectedTimes({
-      ...selectedTimes,
-      [showPicker.id]: {
-        ...selectedTimes[showPicker.id],
-        [showPicker.tipo]: `${horaStr}:${minutoStr}`,
-      },
-    });
-
-    setShowPicker(null);
-    setStatus(`Horário ${showPicker.tipo} definido: ${horaStr}:${minutoStr}`);
-  };
 
   const adicionarNumero = (num) => {
     if (tempHour.length < 2) {
@@ -137,66 +58,97 @@ export default function App() {
     }
   };
 
+  // Funções do alarme
+
+  const abrirAlarmPicker = () => {
+    setTempHour("");
+    setTempMinute("");
+    setShowAlarmPicker(true);
+  };
+
+  const salvarAlarmPicker = async () => {
+    let hora = parseInt(tempHour || "0", 10);
+    let minuto = parseInt(tempMinute || "0", 10);
+
+    if (isNaN(hora) || isNaN(minuto)) {
+      setStatus("Horário inválido — insira números válidos");
+      return;
+    }
+
+    if (hora < 0 || hora > 23) {
+      setStatus("Hora inválida (use 00–23)");
+      return;
+    }
+
+    if (minuto < 0 || minuto > 59) {
+      setStatus("Minuto inválido (use 00–59)");
+      return;
+    }
+
+    const horaStr = hora.toString().padStart(2, "0");
+    const minutoStr = minuto.toString().padStart(2, "0");
+
+    setAlarmTime({ hour: horaStr, minute: minutoStr });
+    setShowAlarmPicker(false);
+    
+    // Configura automaticamente o alarme no ESP8266
+    try {
+      const response = await fetch(`${ESP_IP}/setAlarm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `hour=${hora}&minute=${minuto}`
+      });
+
+      if (response.ok) {
+        setAlarmSet(true);
+        setStatus(`Alarme configurado para ${horaStr}:${minutoStr}`);
+      } else {
+        setStatus("Erro ao configurar alarme");
+      }
+    } catch (error) {
+      setStatus("Erro de conexão ao configurar alarme");
+    }
+  };
+
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Controle dos LEDs</Text>
+      <View style={{ alignItems: 'center' }}>
+        <Image
+          source={require('./assets/images/logoTeste.png')}
+          style={{ width: 180, height: 180, resizeMode: 'contain' }}
+        />
+      </View>
+      <Text style={styles.title}>Alarme Medicinal</Text>
       <Text style={styles.hora}>Hora atual: {horaAtual}</Text>
 
-      {leds.map((led) => (
-        <View key={led.id} style={styles.card}>
-          <View style={styles.rowTop}>
-            <Text style={styles.subtitle}>
-              {selectedTimes[led.id]?.inicio || "--:--"}
-            </Text>
-            <Switch
-              value={led.ligado}
-              onValueChange={(val) => toggleLED(led.id, val)}
-              trackColor={{ false: "#555", true: "#441AFD" }}
-              thumbColor={"#fff"}
-            />
-          </View>
-
-          <Text style={styles.text}>
-            Agendamento: {led.agendamentoAtivo ? "Ativo" : "Inativo"}
-          </Text>
-          <Text style={styles.text}>
-            Início: {selectedTimes[led.id]?.inicio || "--:--"}
-          </Text>
-          <Text style={styles.text}>
-            Fim: {selectedTimes[led.id]?.fim || "--:--"}
-          </Text>
-
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={[styles.btn, styles.scheduleBtn]}
-              onPress={() => abrirPicker(led.id, "inicio")}
-            >
-              <Text style={styles.btnText}>Escolher Início</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.btn, styles.scheduleBtn]}
-              onPress={() => abrirPicker(led.id, "fim")}
-            >
-              <Text style={styles.btnText}>Escolher Fim</Text>
-            </TouchableOpacity>
-          </View>
-
+      {/* Seção do Alarme */}
+      <View style={styles.alarmCard}>
+        <Text style={styles.alarmTitle}>REMEDIO X</Text>
+        <Text style={styles.text}>
+          Alarme: {alarmSet ? `${alarmTime.hour}:${alarmTime.minute}` : "Não configurado"}
+        </Text>
+        
+        <View style={styles.alarmButtonContainer}>
           <TouchableOpacity
-            style={[styles.btn, styles.applyBtn]}
-            onPress={() => configurarPeriodo(led.id)}
-          >
-            <Text style={styles.btnText}>Agendar Período</Text>
-          </TouchableOpacity>
+          style={[styles.btn, styles.alarmBtn]}
+          onPress={abrirAlarmPicker}
+        >
+          <Text style={styles.btnText}>Definir Horário</Text>
+        </TouchableOpacity>
         </View>
-      ))}
+      </View>
+
 
       <Text style={styles.status}>Status: {status}</Text>
 
-      {/* Modal customizado com teclado numérico */}
-      <Modal visible={!!showPicker} transparent animationType="fade">
+
+      {/* Modal para seleção de horário do alarme */}
+      <Modal visible={showAlarmPicker} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Selecionar horário</Text>
+            <Text style={styles.modalTitle}>Definir horário do alarme</Text>
 
             {/* Display da hora/minuto */}
             <View style={styles.modalRow}>
@@ -229,13 +181,13 @@ export default function App() {
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.btn, { backgroundColor: "#555", flex: 1 }]}
-                onPress={() => setShowPicker(null)}
+                onPress={() => setShowAlarmPicker(false)}
               >
                 <Text style={styles.btnText}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: "#2C674D", flex: 1 }]}
-                onPress={salvarPicker}
+                style={[styles.btn, { backgroundColor: "#FF6B35", flex: 1 }]}
+                onPress={salvarAlarmPicker}
               >
                 <Text style={styles.btnText}>OK</Text>
               </TouchableOpacity>
@@ -370,5 +322,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     width: "100%",
     gap: 8,
+  },
+  alarmCard: {
+    backgroundColor: "#41A579",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+  },
+  alarmTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#fff",
+    marginBottom: 8,
+  },
+  alarmBtn: { 
+    backgroundColor: "#2C674D", 
+    flex: 1 
+  },
+  alarmButtonContainer: {
+    marginTop: 16,
   },
 });
