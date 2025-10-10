@@ -5,170 +5,207 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Switch,
   Modal,
-  Image
+  Image,
+  Switch,
+  Alert,
+  TextInput,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function App() {
-  const [status, setStatus] = useState("Desconhecido");
   const [horaAtual, setHoraAtual] = useState("");
+  const [status, setStatus] = useState("Desconhecido");
+  const [showAlarmPicker, setShowAlarmPicker] = useState(false);
   const [tempHour, setTempHour] = useState("");
   const [tempMinute, setTempMinute] = useState("");
-  
-  // Estados do alarme
-  const [alarmTime, setAlarmTime] = useState({ hour: "", minute: "" });
-  const [alarmSet, setAlarmSet] = useState(false);
-  const [showAlarmPicker, setShowAlarmPicker] = useState(false);
+  const [tempName, setTempName] = useState("");
+  const [alarms, setAlarms] = useState([]);
 
-  const ESP_IP = "http://192.168.0.4";
+  const ESP_IP = "http://192.168.0.3";
 
   const atualizarStatus = async () => {
     try {
       const res = await fetch(`${ESP_IP}/status`);
       const data = await res.json();
       setHoraAtual(data.horaAtual);
-      setStatus("OK");
+      setStatus("Conectado");
     } catch {
-      setStatus("Erro ao conectar");
+      setStatus("Falha na conexão com o ESP");
     }
   };
 
   useEffect(() => {
     atualizarStatus();
+    carregarAlarmes();
     const intervalo = setInterval(atualizarStatus, 5000);
     return () => clearInterval(intervalo);
   }, []);
 
-
-
-  const adicionarNumero = (num) => {
-    if (tempHour.length < 2) {
-      setTempHour(tempHour + num);
-    } else if (tempMinute.length < 2) {
-      setTempMinute(tempMinute + num);
+  const carregarAlarmes = async () => {
+    try {
+      const data = await AsyncStorage.getItem("alarms");
+      if (data) setAlarms(JSON.parse(data));
+    } catch (error) {
+      console.error("Erro ao carregar alarmes:", error);
     }
   };
 
-  const apagar = () => {
-    if (tempMinute.length > 0) {
-      setTempMinute(tempMinute.slice(0, -1));
-    } else if (tempHour.length > 0) {
-      setTempHour(tempHour.slice(0, -1));
+  const salvarAlarmes = async (novos) => {
+    try {
+      setAlarms(novos);
+      await AsyncStorage.setItem("alarms", JSON.stringify(novos));
+      enviarProximoAlarme(novos);
+    } catch (error) {
+      console.error("Erro ao salvar alarmes:", error);
     }
   };
 
-  // Funções do alarme
+  const enviarProximoAlarme = async (lista = alarms) => {
+    const ativos = lista.filter((a) => a.enabled);
+    if (ativos.length === 0) return;
+
+    const agora = new Date();
+    const agoraMin = agora.getHours() * 60 + agora.getMinutes();
+
+    const proximo = ativos.reduce((menor, atual) => {
+      const minutosAtual = parseInt(atual.hour) * 60 + parseInt(atual.minute);
+      const diffAtual = (minutosAtual - agoraMin + 1440) % 1440;
+      const diffMenor = menor
+        ? (parseInt(menor.hour) * 60 + parseInt(menor.minute) - agoraMin + 1440) % 1440
+        : Infinity;
+      return diffAtual < diffMenor ? atual : menor;
+    }, null);
+
+    if (proximo) {
+      try {
+        await fetch(`${ESP_IP}/setAlarm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `hour=${proximo.hour}&minute=${proximo.minute}`,
+        });
+        setStatus(`Enviado alarme ${proximo.hour}:${proximo.minute}`);
+      } catch {
+        setStatus("Falha ao enviar alarme ativo");
+      }
+    }
+  };
 
   const abrirAlarmPicker = () => {
     setTempHour("");
     setTempMinute("");
+    setTempName("");
     setShowAlarmPicker(true);
   };
 
-  const salvarAlarmPicker = async () => {
-    let hora = parseInt(tempHour || "0", 10);
-    let minuto = parseInt(tempMinute || "0", 10);
+  const adicionarNumero = (num) => {
+    if (tempHour.length < 2) setTempHour(tempHour + num);
+    else if (tempMinute.length < 2) setTempMinute(tempMinute + num);
+  };
 
-    if (isNaN(hora) || isNaN(minuto)) {
-      setStatus("Horário inválido — insira números válidos");
+  const apagar = () => {
+    if (tempMinute.length > 0) setTempMinute(tempMinute.slice(0, -1));
+    else if (tempHour.length > 0) setTempHour(tempHour.slice(0, -1));
+  };
+
+  const salvarNovoAlarme = async () => {
+    const hora = parseInt(tempHour || "0", 10);
+    const minuto = parseInt(tempMinute || "0", 10);
+    const nome = tempName.trim() || "Alarme";
+
+    if (isNaN(hora) || hora < 0 || hora > 23 || isNaN(minuto) || minuto < 0 || minuto > 59) {
+      Alert.alert("Horário inválido", "Informe um horário entre 00:00 e 23:59");
       return;
     }
 
-    if (hora < 0 || hora > 23) {
-      setStatus("Hora inválida (use 00–23)");
-      return;
-    }
+    const novo = {
+      id: Date.now(),
+      hour: hora.toString().padStart(2, "0"),
+      minute: minuto.toString().padStart(2, "0"),
+      name: nome,
+      enabled: true,
+    };
 
-    if (minuto < 0 || minuto > 59) {
-      setStatus("Minuto inválido (use 00–59)");
-      return;
-    }
-
-    const horaStr = hora.toString().padStart(2, "0");
-    const minutoStr = minuto.toString().padStart(2, "0");
-
-    setAlarmTime({ hour: horaStr, minute: minutoStr });
+    const novos = [...alarms, novo];
+    await salvarAlarmes(novos);
     setShowAlarmPicker(false);
-    
-    // Configura automaticamente o alarme no ESP8266
-    try {
-      const response = await fetch(`${ESP_IP}/setAlarm`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `hour=${hora}&minute=${minuto}`
-      });
+  };
 
-      if (response.ok) {
-        setAlarmSet(true);
-        setStatus(`Alarme configurado para ${horaStr}:${minutoStr}`);
-      } else {
-        setStatus("Erro ao configurar alarme");
-      }
-    } catch (error) {
-      setStatus("Erro de conexão ao configurar alarme");
-    }
+  const alternarAlarme = async (id) => {
+    const novos = alarms.map((a) => (a.id === id ? { ...a, enabled: !a.enabled } : a));
+    await salvarAlarmes(novos);
+  };
+
+  const excluirAlarme = async (id) => {
+    const novos = alarms.filter((a) => a.id !== id);
+    await salvarAlarmes(novos);
   };
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
-      <View style={{ alignItems: 'center' }}>
+      <View style={{ alignItems: "center" }}>
         <Image
-          source={require('./assets/images/logoTeste.png')}
-          style={{ width: 180, height: 180, resizeMode: 'contain' }}
+          source={require("./assets/images/logoTeste.png")}
+          style={{ width: 160, height: 160, resizeMode: "contain" }}
         />
       </View>
+
       <Text style={styles.title}>Alarme Medicinal</Text>
       <Text style={styles.hora}>Hora atual: {horaAtual}</Text>
 
-      {/* Seção do Alarme */}
-      <View style={styles.alarmCard}>
-        <Text style={styles.alarmTitle}>REMEDIO X</Text>
-        <Text style={styles.text}>
-          Alarme: {alarmSet ? `${alarmTime.hour}:${alarmTime.minute}` : "Não configurado"}
-        </Text>
-        
-        <View style={styles.alarmButtonContainer}>
-          <TouchableOpacity
-          style={[styles.btn, styles.alarmBtn]}
-          onPress={abrirAlarmPicker}
-        >
-          <Text style={styles.btnText}>Definir Horário</Text>
-        </TouchableOpacity>
-        </View>
-      </View>
+      {alarms.map((alarm) => (
+        <View key={alarm.id} style={styles.alarmCard}>
+          <View style={styles.rowBetween}>
+            <View>
+              <Text style={styles.alarmTitle}>
+                {alarm.hour}:{alarm.minute}
+              </Text>
+              <Text style={styles.alarmName}>{alarm.name}</Text>
+            </View>
+            <Switch
+              value={alarm.enabled}
+              onValueChange={() => alternarAlarme(alarm.id)}
+              thumbColor={alarm.enabled ? "#41A579" : "#888"}
+            />
+          </View>
 
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: "#555", marginTop: 10 }]}
+            onPress={() => excluirAlarme(alarm.id)}
+          >
+            <Text style={styles.btnText}>Excluir</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+
+      <TouchableOpacity style={[styles.btn, styles.addBtn]} onPress={abrirAlarmPicker}>
+        <Text style={styles.btnText}>+ Adicionar Alarme</Text>
+      </TouchableOpacity>
 
       <Text style={styles.status}>Status: {status}</Text>
 
-
-      {/* Modal para seleção de horário do alarme */}
       <Modal visible={showAlarmPicker} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Definir horário do alarme</Text>
+            <Text style={styles.modalTitle}>Novo Alarme</Text>
 
-            {/* Display da hora/minuto */}
+            <TextInput
+              placeholder="Nome do alarme"
+              placeholderTextColor="#aaa"
+              style={styles.input}
+              value={tempName}
+              onChangeText={setTempName}
+            />
+
             <View style={styles.modalRow}>
-              <Text style={styles.displayText}>
-                {tempHour.padStart(2, "0") || "--"}
-              </Text>
+              <Text style={styles.displayText}>{tempHour.padStart(2, "0") || "--"}</Text>
               <Text style={styles.modalDots}>:</Text>
-              <Text style={styles.displayText}>
-                {tempMinute.padStart(2, "0") || "--"}
-              </Text>
+              <Text style={styles.displayText}>{tempMinute.padStart(2, "0") || "--"}</Text>
             </View>
 
-            {/* Teclado numérico */}
             <View style={styles.keypad}>
               {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map((num) => (
-                <TouchableOpacity
-                  key={num}
-                  style={styles.key}
-                  onPress={() => adicionarNumero(num)}
-                >
+                <TouchableOpacity key={num} style={styles.key} onPress={() => adicionarNumero(num)}>
                   <Text style={styles.keyText}>{num}</Text>
                 </TouchableOpacity>
               ))}
@@ -177,17 +214,16 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
-            {/* Botões Cancelar / OK */}
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: "#555", flex: 1 }]}
+                style={[styles.btn, styles.addBtn, { backgroundColor: "#555", flex: 1 }]}
                 onPress={() => setShowAlarmPicker(false)}
               >
                 <Text style={styles.btnText}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: "#FF6B35", flex: 1 }]}
-                onPress={salvarAlarmPicker}
+                style={[styles.btn, styles.addBtn, { flex: 1 }]}
+                onPress={salvarNovoAlarme}
               >
                 <Text style={styles.btnText}>OK</Text>
               </TouchableOpacity>
@@ -210,52 +246,49 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontWeight: "600",
     color: "#fff",
+    textAlign: "center",
   },
   hora: {
     fontSize: 14,
     marginBottom: 20,
     color: "#aaa",
+    textAlign: "center",
   },
-  card: {
+  alarmCard: {
     backgroundColor: "#41A579",
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
   },
-  rowTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  subtitle: {
-    fontSize: 36,
+  alarmTitle: {
+    fontSize: 22,
     fontWeight: "700",
     color: "#fff",
   },
-  text: {
+  alarmName: {
+    color: "#fff",
+    opacity: 0.8,
     fontSize: 14,
-    color: "#ddd",
-    marginTop: 4,
   },
-  row: {
+  rowBetween: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 16,
+    alignItems: "center",
   },
   btn: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 12,
-    marginHorizontal: 4,
     alignItems: "center",
   },
-  scheduleBtn: { backgroundColor: "#2C674D", flex: 1 },
-  applyBtn: { backgroundColor: "#2C674D", marginTop: 16 },
   btnText: {
     color: "#fff",
     fontWeight: "600",
     fontSize: 14,
-    textAlign: "center",
+  },
+  addBtn: {
+    backgroundColor: "#2C674D",
+    marginTop: 10,
   },
   status: {
     marginTop: 20,
@@ -279,7 +312,16 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: "#fff",
     fontSize: 18,
+    marginBottom: 12,
+  },
+  input: {
+    width: "100%",
+    backgroundColor: "#3c3c3c",
+    color: "#fff",
+    borderRadius: 10,
+    padding: 10,
     marginBottom: 16,
+    fontSize: 16,
   },
   modalRow: {
     flexDirection: "row",
@@ -322,24 +364,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     width: "100%",
     gap: 8,
-  },
-  alarmCard: {
-    backgroundColor: "#41A579",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-  },
-  alarmTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#fff",
-    marginBottom: 8,
-  },
-  alarmBtn: { 
-    backgroundColor: "#2C674D", 
-    flex: 1 
-  },
-  alarmButtonContainer: {
-    marginTop: 16,
   },
 });
