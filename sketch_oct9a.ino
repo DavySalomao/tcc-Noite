@@ -7,14 +7,15 @@ const char* PASSWORD = "eduardods";
 
 ESP8266WebServer server(80);
 
-const int ledPins[4] = { 16, 5, 4, 0 };  // D0, D1, D2, D3
-const int buzzerPin = 15;                // D8
+const int ledPins[8] = {16, 5, 4, 0, 2, 14, 12, 13}; // D0-D7
+const int buzzerPin = 15; // D8
 
 struct Alarm {
   int id;
   int hour;
   int minute;
   uint8_t ledIndex;
+  uint8_t dayIndex; // 0 = Segunda, 1 = Terça
   bool enabled;
   char name[32];
   int lastTriggeredDay;
@@ -29,7 +30,7 @@ void notFound() {
 }
 
 void setupPins() {
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 8; i++) {
     pinMode(ledPins[i], OUTPUT);
     digitalWrite(ledPins[i], LOW);
   }
@@ -45,18 +46,18 @@ void beep(int ms = 150) {
 
 void triggerAlarmAction(int idx) {
   if (idx < 0 || idx >= alarmCount) return;
-  Alarm& a = alarms[idx];
+  Alarm &a = alarms[idx];
   int led = a.ledIndex;
-  if (led < 0 || led > 3) return;
+  if (led < 0 || led > 7) return;
 
-  digitalWrite(ledPins[led], HIGH);  // liga LED
-  beep(200);                         // apenas um beep
-  delay(60000);                      // LED fica aceso por 1 minuto
-  digitalWrite(ledPins[led], LOW);   // desliga LED
+  digitalWrite(ledPins[led], HIGH);
+  beep(200);
+  delay(60000); // LED aceso por 1 minuto
+  digitalWrite(ledPins[led], LOW);
 }
 
 void addOrUpdateAlarmFromArgs() {
-  if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led")) {
+  if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led") || !server.hasArg("day")) {
     server.send(400, "text/plain", "missing params");
     return;
   }
@@ -64,23 +65,26 @@ void addOrUpdateAlarmFromArgs() {
   int hour = server.arg("hour").toInt();
   int minute = server.arg("minute").toInt();
   int led = server.arg("led").toInt();
+  int day = server.arg("day").toInt(); // 0 = Segunda, 1 = Terça
   String name = server.hasArg("name") ? server.arg("name") : "Remedio";
   int id = server.hasArg("id") ? server.arg("id").toInt() : -1;
   bool enabled = true;
   if (server.hasArg("enabled")) enabled = server.arg("enabled") != "0";
 
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || led < 0 || led > 3) {
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || led < 0 || led > 3 || day < 0 || day > 1) {
     server.send(400, "text/plain", "invalid params");
     return;
   }
 
-  // Atualiza se já existir
+  int realLedIndex = led + (day * 4); // Mapeia LED correto (0–3 segunda, 4–7 terça)
+
   if (id >= 0) {
     for (int i = 0; i < alarmCount; i++) {
       if (alarms[i].id == id) {
         alarms[i].hour = hour;
         alarms[i].minute = minute;
-        alarms[i].ledIndex = led;
+        alarms[i].ledIndex = realLedIndex;
+        alarms[i].dayIndex = day;
         alarms[i].enabled = enabled;
         strncpy(alarms[i].name, name.c_str(), sizeof(alarms[i].name) - 1);
         server.send(200, "text/plain", "updated");
@@ -90,17 +94,17 @@ void addOrUpdateAlarmFromArgs() {
     }
   }
 
-  // Novo alarme
   if (alarmCount >= MAX_ALARMS) {
     server.send(500, "text/plain", "full");
     return;
   }
 
-  Alarm& a = alarms[alarmCount++];
+  Alarm &a = alarms[alarmCount++];
   a.id = millis() ^ random(1000, 9999);
   a.hour = hour;
   a.minute = minute;
-  a.ledIndex = led;
+  a.ledIndex = realLedIndex;
+  a.dayIndex = day;
   a.enabled = enabled;
   strncpy(a.name, name.c_str(), sizeof(a.name) - 1);
   a.lastTriggeredDay = -1;
@@ -109,19 +113,18 @@ void addOrUpdateAlarmFromArgs() {
   server.send(200, "text/plain", "added");
 }
 
-void handleSetAlarm() {
-  addOrUpdateAlarmFromArgs();
-}
+void handleSetAlarm() { addOrUpdateAlarmFromArgs(); }
 
 void handleListAlarms() {
   String s = "[";
   for (int i = 0; i < alarmCount; i++) {
-    Alarm& a = alarms[i];
+    Alarm &a = alarms[i];
     s += "{";
     s += "\"id\":" + String(a.id) + ",";
     s += "\"hour\":" + String(a.hour) + ",";
     s += "\"minute\":" + String(a.minute) + ",";
-    s += "\"led\":" + String(a.ledIndex) + ",";
+    s += "\"led\":" + String(a.ledIndex % 4) + ",";
+    s += "\"day\":" + String(a.dayIndex) + ",";
     s += "\"enabled\":" + String(a.enabled ? "true" : "false") + ",";
     s += "\"name\":\"" + String(a.name) + "\"";
     s += "}";
@@ -152,14 +155,14 @@ void handleStatus() {
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
   char buf[64];
-  sprintf(buf, "{\"horaAtual\":\"%02d:%02d\",\"alarms\":%d}", t->tm_hour, t->tm_min, alarmCount);
+  sprintf(buf, "{\"hora\":\"%02d:%02d\",\"alarms\":%d}", t->tm_hour, t->tm_min, alarmCount);
   server.send(200, "application/json", String(buf));
 }
 
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n=== Caixa de Remedios ESP ===");
+  Serial.println("\n=== Caixa de Remedios ESP (Segunda e Terça) ===");
 
   setupPins();
 
@@ -191,30 +194,30 @@ void setup() {
   Serial.println("Servidor HTTP iniciado");
 }
 
-int dayOfYearNow() {
-  time_t now = time(nullptr);
-  struct tm* t = localtime(&now);
-  return t->tm_yday;
-}
-
 void loop() {
   server.handleClient();
 
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
   int today = t->tm_yday;
+  int weekday = t->tm_wday; // 0 = domingo, 1 = segunda, 2 = terça...
 
   for (int i = 0; i < alarmCount; i++) {
-    Alarm& a = alarms[i];
+    Alarm &a = alarms[i];
     if (!a.enabled) continue;
 
-    if (a.hour == t->tm_hour && a.minute == t->tm_min && t->tm_sec == 0) {
-      if (a.lastTriggeredDay != today) {
-        a.lastTriggeredDay = today;
-        Serial.printf("Ativando alarme %s no LED %d (%02d:%02d)\n", a.name, a.ledIndex, a.hour, a.minute);
-        triggerAlarmAction(i);
+    // Apenas ativa se for o dia correto
+    if ((a.dayIndex == 0 && weekday == 1) || (a.dayIndex == 1 && weekday == 2)) {
+      if (a.hour == t->tm_hour && a.minute == t->tm_min && t->tm_sec == 0) {
+        if (a.lastTriggeredDay != today) {
+          a.lastTriggeredDay = today;
+          Serial.printf("Ativando alarme %s (LED %d, Dia %d, %02d:%02d)\n",
+                        a.name, a.ledIndex, a.dayIndex, a.hour, a.minute);
+          triggerAlarmAction(i);
+        }
       }
     }
   }
+
   delay(200);
 }
