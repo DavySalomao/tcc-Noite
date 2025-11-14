@@ -1,4 +1,4 @@
-package com.controleesp
+package com.davy.medtime
 
 import android.app.Application
 import android.content.res.Configuration
