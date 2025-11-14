@@ -1,8 +1,16 @@
 import { registerRootComponent } from 'expo';
+import notifee, { AndroidImportance } from '@notifee/react-native';
+
+notifee.createChannel({
+  id: 'alarme',
+  name: 'Alarme de Remédios',
+  importance: AndroidImportance.HIGH,
+  sound: 'default',
+  vibration: true,
+  lights: true,
+});
+
 
 import App from './App';
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
 registerRootComponent(App);
