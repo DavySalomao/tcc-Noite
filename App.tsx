@@ -45,6 +45,9 @@ export default function App() {
   const [tempLed, setTempLed] = useState(0);
   const [tab, setTab] = useState<"alarms" | "alerts">("alarms");
 
+  // NOVO ESTADO para rastrear o campo ativo no modal
+  const [activeField, setActiveField] = useState<"hour" | "minute">("hour");
+
   const [activeAlarm, setActiveAlarm] = useState<any>(null);
   const activeFetchedRef = useRef<number | null>(null);
 
@@ -91,12 +94,12 @@ export default function App() {
             importance: Notifications.AndroidImportance.HIGH,
             sound: "default",
           });
-        } catch {}
+        } catch { }
       }
     })();
 
-    notificationListener.current = Notifications.addNotificationReceivedListener(() => {});
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(() => {});
+    notificationListener.current = Notifications.addNotificationReceivedListener(() => { });
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(() => { });
 
     return () => {
       if (notificationListener.current)
@@ -218,17 +221,43 @@ export default function App() {
     setTempMinute("");
     setTempName("");
     setTempLed(0);
+    setActiveField("hour"); // Reseta para a hora
     setShowAlarmPicker(true);
   };
 
+  // LÓGICA DE DIGITAÇÃO ATUALIZADA
   const adicionarNumero = (num: string) => {
-    if (tempHour.length < 2) setTempHour((s) => s + num);
-    else if (tempMinute.length < 2) setTempMinute((s) => s + num);
+    if (activeField === "hour") {
+      const newHour = tempHour + num;
+      if (newHour.length <= 2) {
+        setTempHour(newHour);
+        // Regra de transição: se tem 2 dígitos OU se o primeiro dígito é 2 e o segundo é 4-9 (hora inválida)
+        if (newHour.length === 2 || (newHour.length === 1 && parseInt(newHour) > 2)) {
+          setActiveField("minute");
+        }
+      }
+    } else if (activeField === "minute") {
+      const newMinute = tempMinute + num;
+      if (newMinute.length <= 2) {
+        setTempMinute(newMinute);
+        // Regra de transição: se tem 2 dígitos ou é maior que 5 (minuto inválido)
+        if (newMinute.length === 2 || (newMinute.length === 1 && parseInt(newMinute) > 5)) {
+          // Não faz nada, deve aguardar o OK ou a correção pelo usuário
+        }
+      }
+    }
   };
 
+  // LÓGICA DE APAGAR ATUALIZADA
   const apagar = () => {
-    if (tempMinute.length > 0) setTempMinute((s) => s.slice(0, -1));
-    else if (tempHour.length > 0) setTempHour((s) => s.slice(0, -1));
+    if (tempMinute.length > 0) {
+      setTempMinute((s) => s.slice(0, -1));
+      setActiveField("minute"); // Permanece no minuto para apagar
+    }
+    else if (tempHour.length > 0) {
+      setTempHour((s) => s.slice(0, -1));
+      setActiveField("hour"); // Volta para a hora se o minuto estiver vazio
+    }
   };
 
   const salvarNovoAlarme = async () => {
@@ -296,13 +325,13 @@ export default function App() {
               },
               trigger: null,
             });
-          } catch {}
+          } catch { }
         }
       } else {
         activeFetchedRef.current = null;
         setActiveAlarm(null);
       }
-    } catch {}
+    } catch { }
   };
 
   const confirmarAlarmeAtivo = async () => {
@@ -327,23 +356,6 @@ export default function App() {
     }
   };
 
-  const simularDisparo = async (a: AlarmType) => {
-    const msg = `Simulação: "${a.name}", LED ${a.led + 1}.`;
-    await pushAlert("Simulação de disparo", msg);
-
-    try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "Simulação de alarme",
-          body: msg,
-        },
-        trigger: null,
-      });
-    } catch {}
-
-    Alert.alert("Simulado", "Entrada adicionada ao histórico.");
-  };
-
   const limparMemoriaAlarmes = async () => {
     await AsyncStorage.setItem("alarms", JSON.stringify([]));
     setAlarms([]);
@@ -357,14 +369,14 @@ export default function App() {
           onPress={() => setTab("alarms")}
           style={[styles.tabBtn, tab === "alarms" && styles.tabActive]}
         >
-          <Text style={styles.tabText}>Alarmes</Text>
+          <Text style={[styles.tabText, tab === "alarms" && { color: "#fff" }]}>Alarmes</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           onPress={() => setTab("alerts")}
           style={[styles.tabBtn, tab === "alerts" && styles.tabActive]}
         >
-          <Text style={styles.tabText}>Alertas ({alerts.length})</Text>
+          <Text style={[styles.tabText, tab === "alerts" && { color: "#fff" }]}>Alertas ({alerts.length})</Text>
         </TouchableOpacity>
       </View>
 
@@ -393,7 +405,7 @@ export default function App() {
           <View style={{ alignItems: "center" }}>
             <Image
               source={require("./assets/images/logoTeste.png")}
-              style={{ width: 140, height: 140, resizeMode: "contain" }}
+              style={{ width: 250, height: 250, resizeMode: "contain", marginTop: -50 }}
             />
           </View>
 
@@ -415,7 +427,8 @@ export default function App() {
                 <Switch
                   value={alarm.enabled}
                   onValueChange={() => alternarAlarme(alarm.id)}
-                  thumbColor={alarm.enabled ? "#41A579" : "#888"}
+                  thumbColor={alarm.enabled ? "#41A579" : "#ccc"}
+                  trackColor={{ false: "#ccc", true: "#41A579" }} // Cores atualizadas para Switch
                 />
               </View>
 
@@ -423,18 +436,12 @@ export default function App() {
                 style={{ flexDirection: "row", marginTop: 12, gap: 8 }}
               >
                 <TouchableOpacity
-                  style={[styles.btn, { backgroundColor: "#555", flex: 1 }]}
+                  style={[styles.btn, styles.deleteBtn, { flex: 1 }]}
                   onPress={() => excluirAlarme(alarm.id)}
                 >
-                  <Text style={styles.btnText}>Excluir</Text>
+                  <Text style={styles.deleteBtnText}>Excluir</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[styles.btn, { backgroundColor: "#2C674D", flex: 1 }]}
-                  onPress={() => simularDisparo(alarm)}
-                >
-                  <Text style={styles.btnText}>Simular</Text>
-                </TouchableOpacity>
               </View>
             </View>
           ))}
@@ -443,11 +450,11 @@ export default function App() {
             style={[styles.btn, styles.addBtn]}
             onPress={abrirAlarmPicker}
           >
-            <Text style={styles.btnText}>+ Adicionar Alarme</Text>
+            <Text style={styles.btnText}>Adicionar Alarme</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: "#922", marginTop: 10 }]}
+            style={[styles.btn, styles.clearBtn, { marginTop: 10 }]}
             onPress={limparMemoriaAlarmes}
           >
             <Text style={styles.btnText}>Limpar Memória</Text>
@@ -455,6 +462,7 @@ export default function App() {
 
           <Text style={styles.status}>Status: {status}</Text>
 
+          {/* NOVO MODAL DE ALARME */}
           <Modal visible={showAlarmPicker} transparent animationType="fade">
             <View style={styles.modalOverlay}>
               <View style={styles.modalBox}>
@@ -462,56 +470,63 @@ export default function App() {
 
                 <TextInput
                   placeholder="Nome do alarme"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor="#888"
                   style={styles.input}
                   value={tempName}
                   onChangeText={setTempName}
                 />
 
+                {/* DISPLAY DE HORÁRIO COM DESTAQUE CLICÁVEL */}
                 <View style={styles.modalRow}>
-                  <Text style={styles.displayText}>
-                    {tempHour.padStart(2, "0") || "--"}
-                  </Text>
+                  <TouchableOpacity onPress={() => setActiveField('hour')}>
+                    <Text
+                      style={[
+                        styles.displayText,
+                        activeField === 'hour' && styles.activeDisplay,
+                        (parseInt(tempHour) > 23 || tempHour.length === 0) && styles.invalidDisplay // Validação visual
+                      ]}
+                    >
+                      {tempHour.padStart(2, "0") || "--"}
+                    </Text>
+                  </TouchableOpacity>
+
                   <Text style={styles.modalDots}>:</Text>
-                  <Text style={styles.displayText}>
-                    {tempMinute.padStart(2, "0") || "--"}
-                  </Text>
+
+                  <TouchableOpacity onPress={() => setActiveField('minute')}>
+                    <Text
+                      style={[
+                        styles.displayText,
+                        activeField === 'minute' && styles.activeDisplay,
+                        (parseInt(tempMinute) > 59 || tempMinute.length === 0) && styles.invalidDisplay // Validação visual
+                      ]}
+                    >
+                      {tempMinute.padStart(2, "0") || "--"}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
+                {/* BOTÕES LED */}
                 <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    width: "100%",
-                    marginBottom: 10,
-                  }}
+                  style={styles.ledButtonsContainer}
                 >
                   {[0, 1, 2, 3, 4, 5, 6, 7].map((led) => (
                     <TouchableOpacity
                       key={led}
                       style={[
                         styles.dayBtn,
-                        tempLed === led && { backgroundColor: "#41A579" },
+                        tempLed === led && styles.ledActive,
                       ]}
                       onPress={() => setTempLed(led)}
                     >
-                      <Text style={{ color: "#fff" }}>LED {led + 1}</Text>
+                      <Text style={styles.dayBtnText}>LED {led + 1}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
+                {/* KEYPAD ATUALIZADO */}
                 <View style={styles.keypad}>
                   {[
-                    "1",
-                    "2",
-                    "3",
-                    "4",
-                    "5",
-                    "6",
-                    "7",
-                    "8",
-                    "9",
-                    "0",
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
                   ].map((num) => (
                     <TouchableOpacity
                       key={num}
@@ -522,25 +537,26 @@ export default function App() {
                     </TouchableOpacity>
                   ))}
 
-                  <TouchableOpacity style={styles.key} onPress={apagar}>
-                    <Text style={styles.keyText}>⌫</Text>
+                  <TouchableOpacity style={styles.deleteKey} onPress={apagar}>
+                    <Text style={styles.deleteKeyText}>⌫</Text>
                   </TouchableOpacity>
                 </View>
 
+                {/* BOTÕES DE AÇÃO */}
                 <View style={styles.modalButtons}>
                   <TouchableOpacity
                     style={[
                       styles.btn,
-                      styles.addBtn,
-                      { backgroundColor: "#555", flex: 1 },
+                      styles.cancelBtn,
+                      { flex: 1 },
                     ]}
                     onPress={() => setShowAlarmPicker(false)}
                   >
-                    <Text style={styles.btnText}>Cancelar</Text>
+                    <Text style={styles.cancelBtnText}>Cancelar</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.btn, styles.addBtn, { flex: 1 }]}
+                    style={[styles.btn, styles.addBtn, { flex: 1, marginTop: 0 }]}
                     onPress={salvarNovoAlarme}
                   >
                     <Text style={styles.btnText}>OK</Text>
@@ -549,25 +565,28 @@ export default function App() {
               </View>
             </View>
           </Modal>
+          {/* FIM DO NOVO MODAL */}
+
         </ScrollView>
       ) : (
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: "#fff" }}>
           <View
             style={{
               padding: 12,
               flexDirection: "row",
               justifyContent: "space-between",
               alignItems: "center",
+              backgroundColor: "#f0f0f0", // Fundo leve para o cabeçalho dos alertas
             }}
           >
-            <Text style={{ color: "#fff" }}>Histórico de alertas</Text>
+            <Text style={{ color: "#333" }}>Histórico de alertas</Text>
             <TouchableOpacity
               onPress={async () => {
                 await salvarAlerts([]);
               }}
-              style={{ backgroundColor: "#922", padding: 8, borderRadius: 8 }}
+              style={styles.clearAlertsBtn}
             >
-              <Text style={{ color: "#fff" }}>Limpar</Text>
+              <Text style={styles.clearAlertsBtnText}>Limpar</Text>
             </TouchableOpacity>
           </View>
 
@@ -578,7 +597,7 @@ export default function App() {
             ListEmptyComponent={
               <Text
                 style={{
-                  color: "#aaa",
+                  color: "#888",
                   textAlign: "center",
                   marginTop: 20,
                 }}
@@ -589,19 +608,21 @@ export default function App() {
             renderItem={({ item }) => (
               <View
                 style={{
-                  backgroundColor: "#2c2c2c",
+                  backgroundColor: "#f5f5f5", // Fundo claro para o card de alerta
                   padding: 12,
                   borderRadius: 10,
                   marginBottom: 12,
+                  borderLeftWidth: 4,
+                  borderLeftColor: "#41A579",
                 }}
               >
-                <Text style={{ color: "#fff", fontWeight: "700" }}>
+                <Text style={{ color: "#333", fontWeight: "700" }}>
                   {item.title}
                 </Text>
-                <Text style={{ color: "#ccc", marginTop: 6 }}>
+                <Text style={{ color: "#666", marginTop: 6, fontSize: 12 }}>
                   {new Date(item.timestamp).toLocaleString()}
                 </Text>
-                <Text style={{ color: "#ddd", marginTop: 8 }}>
+                <Text style={{ color: "#555", marginTop: 8 }}>
                   {item.message}
                 </Text>
               </View>
@@ -614,44 +635,52 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, padding: 16, backgroundColor: "#1c1c1c" },
+  container: { flexGrow: 1, padding: 16, backgroundColor: "#fff" },
 
-  topbar: { flexDirection: "row", backgroundColor: "#111", paddingVertical: 8 },
+  topbar: { flexDirection: "row", backgroundColor: "#2C674D", paddingVertical: 10, borderBottomColor: "#ddd" }, // Fundo verde
   tabBtn: { flex: 1, alignItems: "center", padding: 10 },
-  tabActive: { backgroundColor: "#222" },
-  tabText: { color: "#fff", fontWeight: "600" },
+  tabActive: { backgroundColor: "#4cac82ff" },
+  tabText: { color: "#Ffff", fontWeight: "600" },
 
   activeBanner: {
-    backgroundColor: "#922",
+    backgroundColor: "#D9534F",
     padding: 12,
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
   },
-  confirmBtn: { backgroundColor: "#2C674D", padding: 8, borderRadius: 8 },
+  confirmBtn: { backgroundColor: "#1e6443", padding: 8, borderRadius: 8 },
 
   title: {
-    fontSize: 22,
-    marginBottom: 10,
-    fontWeight: "600",
-    color: "#fff",
+    fontSize: 24,
+    marginBottom: 8,
+    fontWeight: "700",
+    color: "#333",
     textAlign: "center",
   },
   hora: {
     fontSize: 14,
     marginBottom: 20,
-    color: "#aaa",
+    color: "#666",
     textAlign: "center",
   },
 
   alarmCard: {
-    backgroundColor: "#41A579",
+    backgroundColor: "#F5F5F5",
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
+    borderLeftWidth: 6,
+    borderLeftColor: "#41A579",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 3,
   },
-  alarmTitle: { fontSize: 22, fontWeight: "700", color: "#fff" },
-  alarmName: { color: "#fff", opacity: 0.8, fontSize: 14 },
+
+  alarmTitle: { fontSize: 24, fontWeight: "800", color: "#333" },
+  alarmName: { color: "#666", fontSize: 14, marginTop: 4 },
   rowBetween: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -659,16 +688,24 @@ const styles = StyleSheet.create({
   },
 
   btn: {
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
     alignItems: "center",
   },
-  btnText: { color: "#fff", fontWeight: "600", fontSize: 14 },
-  addBtn: { backgroundColor: "#2C674D", marginTop: 10 },
+  btnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 
-  status: { marginTop: 20, fontSize: 14, textAlign: "center", color: "#aaa" },
+  addBtn: { backgroundColor: "#2C674D", marginTop: 10 }, // Botão Adicionar (Verde)
 
+  deleteBtn: { backgroundColor: "#dc3545", flex: 1 }, // Botão Excluir (Vermelho)
+  deleteBtnText: { color: "#fff", fontWeight: "700" },
+
+  clearBtn: { backgroundColor: "#dc3545" }, // Botão Limpar Memória (Vermelho)
+
+  // Status
+  status: { marginTop: 20, fontSize: 14, textAlign: "center", color: "#888" },
+
+  // Modal (Novo Alarme)
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -676,42 +713,74 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   modalBox: {
-    backgroundColor: "#2c2c2c",
-    padding: 20,
-    borderRadius: 12,
-    width: "80%",
+    backgroundColor: "#fff",
+    padding: 24,
+    borderRadius: 16,
+    width: "90%",
+    maxWidth: 400,
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 10,
   },
-  modalTitle: { color: "#fff", fontSize: 18, marginBottom: 12 },
+  modalTitle: { color: "#333", fontSize: 20, fontWeight: "600", marginBottom: 16 },
 
   input: {
     width: "100%",
-    backgroundColor: "#3c3c3c",
-    color: "#fff",
+    backgroundColor: "#f5f5f5",
+    color: "#333",
     borderRadius: 10,
-    padding: 10,
-    marginBottom: 16,
+    padding: 12,
+    marginBottom: 20,
     fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#ddd",
   },
 
   modalRow: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
+
   displayText: {
-    fontSize: 40,
-    color: "#fff",
-    fontWeight: "700",
-    width: 60,
+    fontSize: 48,
+    color: "#333",
+    fontWeight: "800",
+    width: 80,
     textAlign: "center",
+    paddingBottom: 5,
   },
-  modalDots: { color: "#fff", fontSize: 28, marginHorizontal: 8 },
+  modalDots: { color: "#333", fontSize: 36, marginHorizontal: 5 },
+
+  activeDisplay: {
+    borderBottomWidth: 3,
+    borderBottomColor: '#2C674D',
+  },
+  invalidDisplay: {
+    color: '#dc3545',
+  },
 
   keypad: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
+    width: "100%",
     marginBottom: 20,
   },
   key: {
-    backgroundColor: "#444",
+    backgroundColor: "#eee",
+    width: "28%",
+    margin: "2%",
+    aspectRatio: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  keyText: { color: "#333", fontSize: 28, fontWeight: "700" },
+
+  deleteKey: {
+    backgroundColor: '#6c757d',
     width: "28%",
     margin: "2%",
     aspectRatio: 1,
@@ -719,16 +788,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 12,
   },
-  keyText: { color: "#fff", fontSize: 24, fontWeight: "600" },
+  deleteKeyText: { color: '#fff', fontSize: 28, fontWeight: '700' },
 
-  modalButtons: { flexDirection: "row", width: "100%", gap: 8 },
+  modalButtons: { flexDirection: "row", width: "100%", gap: 10, marginTop: 10 },
+  cancelBtn: { backgroundColor: "#6c757d" },
+  cancelBtnText: { color: "#fff", fontWeight: "700" },
 
+  ledButtonsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 10,
+  },
   dayBtn: {
-    backgroundColor: "#333",
+    backgroundColor: "#e9ecef",
     padding: 8,
     borderRadius: 10,
     alignItems: "center",
     flex: 1,
-    marginHorizontal: 4,
+    marginHorizontal: 2,
+    borderWidth: 1,
+    borderColor: "#ddd",
   },
+  ledActive: {
+    backgroundColor: "#41A579",
+  },
+  dayBtnText: { color: "#333", fontWeight: "600" },
+
+  clearAlertsBtn: { backgroundColor: "#dc3545", padding: 8, borderRadius: 8 },
+  clearAlertsBtnText: { color: "#fff" },
 });
