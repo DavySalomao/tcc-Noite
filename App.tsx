@@ -54,7 +54,7 @@ export default function App() {
   const notificationListener = useRef<any>(null);
   const responseListener = useRef<any>(null);
 
-  const ESP_IP = "http://192.168.0.5";
+  const ESP_IP = "http://192.168.137.6";
 
   async function registerForPushNotificationsAsync() {
     try {

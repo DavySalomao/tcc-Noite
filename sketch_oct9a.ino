@@ -1,19 +1,12 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <WiFiManager.h>
 #include <time.h>
-
-const char* SSID = "Casa";
-const char* PASSWORD = "flavinho1982";
 
 ESP8266WebServer server(80);
 
-// LEDs D0–D7
 const int ledPins[8] = { 16, 5, 4, 0, 2, 14, 12, 13 };
-
-// Buzzer D8
 const int buzzerPin = 15;
-
-// ------------------ ALARMES ------------------
 
 struct Alarm {
   int id;
@@ -41,7 +34,27 @@ unsigned long seqStartMs = 0;
 int seqStage = 0;
 unsigned long lastSequenceRepeat = 0;
 
-// ------------------ SETUP ------------------
+// ------------------ WIFI AUTOMÁTICO ------------------
+
+void setupWiFiAutomatico() {
+  Serial.println("Iniciando WiFiManager...");
+
+  WiFiManager wm;
+
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(300);
+
+  // AP fixo com senha
+  bool conectado = wm.autoConnect("Medtime", "12345678");
+
+  if (!conectado) {
+    Serial.println("Falha ao conectar. Aguardando configuração...");
+  } else {
+    Serial.println("WiFi conectado!");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  }
+}
 
 void setupPins() {
   for (int i = 0; i < 8; i++) {
@@ -98,8 +111,6 @@ void triggerAlarmStart(int idx) {
   startSequenceNow();
 }
 
-// ------------------ HTTP ------------------
-
 void addOrUpdateAlarmFromArgs() {
   if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led")) {
     server.send(400, "text/plain", "missing params");
@@ -118,7 +129,6 @@ void addOrUpdateAlarmFromArgs() {
     return;
   }
 
-  // Atualizar
   if (id >= 0) {
     for (int i = 0; i < alarmCount; i++) {
       if (alarms[i].id == id) {
@@ -134,23 +144,20 @@ void addOrUpdateAlarmFromArgs() {
     }
   }
 
-  // Criar novo
-  if (alarmCount >= MAX_ALARMS) {
-    server.send(500, "text/plain", "full");
-    return;
+  if (alarmCount < MAX_ALARMS) {
+    alarms[alarmCount].id = alarmCount;
+    alarms[alarmCount].hour = hour;
+    alarms[alarmCount].minute = minute;
+    alarms[alarmCount].ledIndex = led;
+    alarms[alarmCount].enabled = enabled;
+    strncpy(alarms[alarmCount].name, name.c_str(), sizeof(alarms[alarmCount].name) - 1);
+    alarms[alarmCount].lastTriggeredDay = -1;
+    alarmCount++;
+    playConfirmationSequenceBlocking();
+    server.send(200, "text/plain", "added");
+  } else {
+    server.send(400, "text/plain", "full");
   }
-
-  Alarm& a = alarms[alarmCount++];
-  a.id = millis() ^ random(1000, 9999);
-  a.hour = hour;
-  a.minute = minute;
-  a.ledIndex = led;
-  a.enabled = enabled;
-  a.lastTriggeredDay = -1;
-  strncpy(a.name, name.c_str(), sizeof(a.name) - 1);
-
-  playConfirmationSequenceBlocking();
-  server.send(200, "text/plain", "added");
 }
 
 void handleListAlarms() {
@@ -212,14 +219,30 @@ void handleStopAlarm() {
   server.send(200, "text/plain", "stopped");
 }
 
-// ------------------ MAIN ------------------
+// ---------- STATUS ----------
+void handleStatus() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+
+  char timeStr[6];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", t->tm_hour, t->tm_min);
+
+  String json = "{";
+  json += "\"time\":\"" + String(timeStr) + "\",";
+  json += "\"wifi\":\"" + String(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected") + "\"";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+// ------------------ SETUP ------------------
 
 void setup() {
   Serial.begin(115200);
-  setupPins();
+  delay(500);
 
-  WiFi.begin(SSID, PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) delay(100);
+  setupPins();
+  setupWiFiAutomatico();
 
   configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
@@ -228,10 +251,12 @@ void setup() {
   server.on("/deleteAlarm", HTTP_POST, handleDeleteAlarm);
   server.on("/stopAlarm", HTTP_POST, handleStopAlarm);
   server.on("/active", HTTP_GET, handleActive);
-  server.begin();
-
   server.on("/status", HTTP_GET, handleStatus);
+
+  server.begin();
 }
+
+// ------------------ LOOP ------------------
 
 void loop() {
   server.handleClient();
@@ -241,14 +266,11 @@ void loop() {
 
   int today = t->tm_yday;
 
-  // --------------- DISPARO DO ALARME -----------------
-
   for (int i = 0; i < alarmCount; i++) {
     Alarm& a = alarms[i];
     if (!a.enabled) continue;
 
     if (a.hour == t->tm_hour && a.minute == t->tm_min && t->tm_sec <= 2) {
-
       if (a.lastTriggeredDay != today) {
         a.lastTriggeredDay = today;
         triggerAlarmStart(i);
@@ -256,10 +278,7 @@ void loop() {
     }
   }
 
-  // --------------- SEQUÊNCIA DO BUZZER -----------------
-
   if (alarmActive && activeAlarmIdx >= 0) {
-
     if (millis() - alarmStartMs >= alarmDurationMs) {
       stopActiveAlarm();
     } else {
@@ -285,21 +304,5 @@ void loop() {
     }
   }
 
-
   delay(50);
-}
-
-void handleStatus() {
-  time_t now = time(nullptr);
-  struct tm* t = localtime(&now);
-
-  char timeStr[6];
-  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", t->tm_hour, t->tm_min);
-
-  String json = "{";
-  json += "\"time\":\"" + String(timeStr) + "\",";
-  json += "\"wifi\":\"" + String(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected") + "\"";
-  json += "}";
-
-  server.send(200, "application/json", json);
 }
