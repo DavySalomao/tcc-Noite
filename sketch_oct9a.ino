@@ -1,36 +1,29 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <WiFiManager.h>
 #include <time.h>
-
-const char* SSID = "Casa";
-const char* PASSWORD = "flavinho1982";
 
 ESP8266WebServer server(80);
 
-// LEDs D0–D7
-const int ledPins[8] = { 16, 5, 4, 0, 2, 14, 12, 13 };
-
-// Buzzer D8
-const int buzzerPin = 15;
-
-// ------------------ ALARMES ------------------
+const uint8_t ledPins[8] = { 16, 5, 4, 0, 2, 14, 12, 13 };
+const uint8_t buzzerPin = 15;
 
 struct Alarm {
-  int id;
-  int hour;
-  int minute;
+  uint8_t id;
+  uint8_t hour;
+  uint8_t minute;
   uint8_t ledIndex;
   bool enabled;
-  int lastTriggeredDay;
-  char name[32];
+  int16_t lastTriggeredDay;
+  char name[20];
 };
 
-const int MAX_ALARMS = 16;
+const uint8_t MAX_ALARMS = 16;
 Alarm alarms[MAX_ALARMS];
-int alarmCount = 0;
+uint8_t alarmCount = 0;
 
 bool alarmActive = false;
-int activeAlarmIdx = -1;
+int8_t activeAlarmIdx = -1;
 unsigned long alarmStartMs = 0;
 
 const unsigned long alarmDurationMs = 180000UL;
@@ -38,13 +31,38 @@ const unsigned long sequenceRepeatMs = 5000UL;
 
 bool playingSequence = false;
 unsigned long seqStartMs = 0;
-int seqStage = 0;
+uint8_t seqStage = 0;
 unsigned long lastSequenceRepeat = 0;
 
-// ------------------ SETUP ------------------
+
+// ----------------------------------------------------------
+// WIFI
+// ----------------------------------------------------------
+
+void setupWiFiAutomatico() {
+  Serial.println("WiFiManager...");
+
+  WiFiManager wm;
+  wm.setConnectTimeout(10);
+  wm.setConfigPortalTimeout(300);
+
+  bool ok = wm.autoConnect("Medtime", "12345678");
+
+  if (!ok) {
+    Serial.println("Aguardando configuração...");
+  } else {
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  }
+}
+
+
+// ----------------------------------------------------------
+// PINOS
+// ----------------------------------------------------------
 
 void setupPins() {
-  for (int i = 0; i < 8; i++) {
+  for (uint8_t i = 0; i < 8; i++) {
     pinMode(ledPins[i], OUTPUT);
     digitalWrite(ledPins[i], LOW);
   }
@@ -52,13 +70,34 @@ void setupPins() {
   digitalWrite(buzzerPin, LOW);
 }
 
-void playConfirmationSequenceBlocking() {
-  tone(buzzerPin, 2000, 300);
-  delay(500);
-  tone(buzzerPin, 1500, 300);
-  delay(500);
-  tone(buzzerPin, 2500, 300);
-  delay(200);
+
+// ----------------------------------------------------------
+// SEQUÊNCIA DE CONFIRMAÇÃO (não bloqueante)
+// ----------------------------------------------------------
+
+void playConfirmation() {
+  tone(buzzerPin, 2000, 120);
+  delay(150);
+  tone(buzzerPin, 1500, 120);
+  delay(150);
+  tone(buzzerPin, 2500, 120);
+  delay(100);
+  noTone(buzzerPin);
+}
+
+
+// ----------------------------------------------------------
+// ALARM START/STOP
+// ----------------------------------------------------------
+
+void stopActiveAlarm() {
+  if (alarmActive && activeAlarmIdx >= 0) {
+    digitalWrite(ledPins[alarms[activeAlarmIdx].ledIndex], LOW);
+  }
+  alarmActive = false;
+  activeAlarmIdx = -1;
+  playingSequence = false;
+  seqStage = 0;
   noTone(buzzerPin);
 }
 
@@ -70,20 +109,7 @@ void startSequenceNow() {
   lastSequenceRepeat = millis();
 }
 
-void stopActiveAlarm() {
-  if (alarmActive && activeAlarmIdx >= 0 && activeAlarmIdx < alarmCount) {
-    digitalWrite(ledPins[alarms[activeAlarmIdx].ledIndex], LOW);
-  }
-  alarmActive = false;
-  activeAlarmIdx = -1;
-  playingSequence = false;
-  seqStage = 0;
-  noTone(buzzerPin);
-}
-
-void triggerAlarmStart(int idx) {
-  if (idx < 0 || idx >= alarmCount) return;
-
+void triggerAlarmStart(uint8_t idx) {
   if (alarmActive) stopActiveAlarm();
 
   alarmActive = true;
@@ -94,212 +120,207 @@ void triggerAlarmStart(int idx) {
   seqStage = 0;
 
   digitalWrite(ledPins[alarms[idx].ledIndex], HIGH);
-
   startSequenceNow();
 }
 
-// ------------------ HTTP ------------------
 
-void addOrUpdateAlarmFromArgs() {
+// ----------------------------------------------------------
+// HTTP HANDLERS
+// ----------------------------------------------------------
+
+void addOrUpdateAlarm() {
   if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led")) {
-    server.send(400, "text/plain", "missing params");
+    server.send(400, "text/plain", "missing");
     return;
   }
 
-  int hour = server.arg("hour").toInt();
-  int minute = server.arg("minute").toInt();
-  int led = server.arg("led").toInt();
-  String name = server.hasArg("name") ? server.arg("name") : "Alarme";
-  int id = server.hasArg("id") ? server.arg("id").toInt() : -1;
-  bool enabled = !server.hasArg("enabled") || server.arg("enabled") != "0";
+  uint8_t hour = server.arg("hour").toInt();
+  uint8_t minute = server.arg("minute").toInt();
+  uint8_t led = server.arg("led").toInt();
+  const String name = server.hasArg("name") ? server.arg("name") : "Alarme";
 
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || led < 0 || led > 7) {
-    server.send(400, "text/plain", "invalid params");
+  if (hour > 23 || minute > 59 || led > 7) {
+    server.send(400, "text/plain", "invalid");
     return;
   }
 
-  // Atualizar
-  if (id >= 0) {
-    for (int i = 0; i < alarmCount; i++) {
+  bool update = server.hasArg("id");
+  uint8_t id = server.arg("id").toInt();
+
+  if (update) {
+    for (uint8_t i = 0; i < alarmCount; i++) {
       if (alarms[i].id == id) {
         alarms[i].hour = hour;
         alarms[i].minute = minute;
         alarms[i].ledIndex = led;
-        alarms[i].enabled = enabled;
+        alarms[i].enabled = true;
         strncpy(alarms[i].name, name.c_str(), sizeof(alarms[i].name) - 1);
-        playConfirmationSequenceBlocking();
-        server.send(200, "text/plain", "updated");
+        playConfirmation();
+        server.send(200, "text/plain", "ok");
         return;
       }
     }
   }
 
-  // Criar novo
   if (alarmCount >= MAX_ALARMS) {
-    server.send(500, "text/plain", "full");
+    server.send(400, "text/plain", "full");
     return;
   }
 
-  Alarm& a = alarms[alarmCount++];
-  a.id = millis() ^ random(1000, 9999);
+  Alarm &a = alarms[alarmCount];
+  a.id = alarmCount;
   a.hour = hour;
   a.minute = minute;
   a.ledIndex = led;
-  a.enabled = enabled;
+  a.enabled = true;
   a.lastTriggeredDay = -1;
   strncpy(a.name, name.c_str(), sizeof(a.name) - 1);
 
-  playConfirmationSequenceBlocking();
-  server.send(200, "text/plain", "added");
+  alarmCount++;
+
+  playConfirmation();
+  server.send(200, "text/plain", "ok");
 }
 
-void handleListAlarms() {
-  String s = "[";
-  for (int i = 0; i < alarmCount; i++) {
-    Alarm& a = alarms[i];
-    s += "{";
-    s += "\"id\":" + String(a.id) + ",";
-    s += "\"hour\":" + String(a.hour) + ",";
-    s += "\"minute\":" + String(a.minute) + ",";
-    s += "\"led\":" + String(a.ledIndex) + ",";
-    s += "\"enabled\":" + String(a.enabled ? "true" : "false") + ",";
-    s += "\"name\":\"" + String(a.name) + "\"";
-    s += "}";
-    if (i < alarmCount - 1) s += ",";
-  }
-  s += "]";
-  server.send(200, "application/json", s);
-}
+void listAlarms() {
+  char buffer[700];
+  uint16_t pos = 0;
 
-void handleActive() {
-  if (!alarmActive || activeAlarmIdx < 0 || activeAlarmIdx >= alarmCount) {
-    server.send(200, "application/json", "{\"active\":false}");
-    return;
+  pos += snprintf(buffer + pos, sizeof(buffer) - pos, "[");
+
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    Alarm &a = alarms[i];
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+      "{\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"enabled\":%d,\"name\":\"%s\"}%s",
+      a.id, a.hour, a.minute, a.ledIndex, a.enabled, a.name,
+      (i < alarmCount - 1 ? "," : "")
+    );
   }
 
-  Alarm& a = alarms[activeAlarmIdx];
-  String s = "{";
-  s += "\"active\":true,";
-  s += "\"id\":" + String(a.id) + ",";
-  s += "\"hour\":" + String(a.hour) + ",";
-  s += "\"minute\":" + String(a.minute) + ",";
-  s += "\"led\":" + String(a.ledIndex) + ",";
-  s += "\"name\":\"" + String(a.name) + "\"";
-  s += "}";
-  server.send(200, "application/json", s);
-}
-
-void handleDeleteAlarm() {
-  if (!server.hasArg("id")) {
-    server.send(400, "text/plain", "missing id");
-    return;
-  }
-
-  int id = server.arg("id").toInt();
-  int writeIdx = 0;
-
-  for (int i = 0; i < alarmCount; i++) {
-    if (alarms[i].id != id) alarms[writeIdx++] = alarms[i];
-  }
-
-  alarmCount = writeIdx;
-  playConfirmationSequenceBlocking();
-  server.send(200, "text/plain", "deleted");
-}
-
-void handleStopAlarm() {
-  stopActiveAlarm();
-  server.send(200, "text/plain", "stopped");
-}
-
-// ------------------ MAIN ------------------
-
-void setup() {
-  Serial.begin(115200);
-  setupPins();
-
-  WiFi.begin(SSID, PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) delay(100);
-
-  configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-
-  server.on("/setAlarm", HTTP_POST, addOrUpdateAlarmFromArgs);
-  server.on("/listAlarms", HTTP_GET, handleListAlarms);
-  server.on("/deleteAlarm", HTTP_POST, handleDeleteAlarm);
-  server.on("/stopAlarm", HTTP_POST, handleStopAlarm);
-  server.on("/active", HTTP_GET, handleActive);
-  server.begin();
-
-  server.on("/status", HTTP_GET, handleStatus);
-}
-
-void loop() {
-  server.handleClient();
-
-  time_t now = time(nullptr);
-  struct tm* t = localtime(&now);
-
-  int today = t->tm_yday;
-
-  // --------------- DISPARO DO ALARME -----------------
-
-  for (int i = 0; i < alarmCount; i++) {
-    Alarm& a = alarms[i];
-    if (!a.enabled) continue;
-
-    if (a.hour == t->tm_hour && a.minute == t->tm_min && t->tm_sec <= 2) {
-
-      if (a.lastTriggeredDay != today) {
-        a.lastTriggeredDay = today;
-        triggerAlarmStart(i);
-      }
-    }
-  }
-
-  // --------------- SEQUÊNCIA DO BUZZER -----------------
-
-  if (alarmActive && activeAlarmIdx >= 0) {
-
-    if (millis() - alarmStartMs >= alarmDurationMs) {
-      stopActiveAlarm();
-    } else {
-      if (!playingSequence && millis() - lastSequenceRepeat >= sequenceRepeatMs) {
-        startSequenceNow();
-      }
-
-      if (playingSequence) {
-        unsigned long dt = millis() - seqStartMs;
-
-        if (seqStage == 1 && dt >= 800) {
-          tone(buzzerPin, 1500, 300);
-          seqStage = 2;
-        } else if (seqStage == 2 && dt >= 1600) {
-          tone(buzzerPin, 2500, 300);
-          seqStage = 3;
-        } else if (seqStage == 3 && dt >= 1900) {
-          playingSequence = false;
-          seqStage = 0;
-          lastSequenceRepeat = millis();
-        }
-      }
-    }
-  }
-
-
-  delay(50);
+  snprintf(buffer + pos, sizeof(buffer) - pos, "]");
+  server.send(200, "application/json", buffer);
 }
 
 void handleStatus() {
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
 
-  char timeStr[6];
-  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", t->tm_hour, t->tm_min);
+  char out[60];
+  snprintf(out, sizeof(out),
+           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\"}",
+           t->tm_hour, t->tm_min,
+           WiFi.isConnected() ? "connected" : "disconnected");
 
-  String json = "{";
-  json += "\"time\":\"" + String(timeStr) + "\",";
-  json += "\"wifi\":\"" + String(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected") + "\"";
-  json += "}";
+  server.send(200, "application/json", out);
+}
 
-  server.send(200, "application/json", json);
+void deleteAlarm() {
+  if (!server.hasArg("id")) {
+    server.send(400, "text/plain", "missing");
+    return;
+  }
+
+  uint8_t id = server.arg("id").toInt();
+  uint8_t w = 0;
+
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    if (alarms[i].id != id) {
+      alarms[w++] = alarms[i];
+    }
+  }
+
+  alarmCount = w;
+  playConfirmation();
+  server.send(200, "text/plain", "ok");
+}
+
+
+// ----------------------------------------------------------
+// SETUP
+// ----------------------------------------------------------
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  setupPins();
+  setupWiFiAutomatico();
+
+  configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+  server.on("/setAlarm", HTTP_POST, addOrUpdateAlarm);
+  server.on("/listAlarms", HTTP_GET, listAlarms);
+  server.on("/deleteAlarm", HTTP_POST, deleteAlarm);
+  server.on("/stopAlarm", HTTP_POST, []() { stopActiveAlarm(); server.send(200, "text/plain", "ok"); });
+  server.on("/active", HTTP_GET, []() {
+    if (!alarmActive || activeAlarmIdx < 0) {
+      server.send(200, "application/json", "{\"active\":false}");
+      return;
+    }
+
+    Alarm &a = alarms[activeAlarmIdx];
+    char out[120];
+    snprintf(out, sizeof(out),
+             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\"}",
+             a.id, a.hour, a.minute, a.ledIndex, a.name);
+
+    server.send(200, "application/json", out);
+  });
+
+  server.begin();
+}
+
+
+// ----------------------------------------------------------
+// LOOP
+// ----------------------------------------------------------
+
+void loop() {
+  server.handleClient();
+
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  uint16_t today = t->tm_yday;
+
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    Alarm &a = alarms[i];
+    if (!a.enabled) continue;
+
+    if (a.hour == t->tm_hour &&
+        a.minute == t->tm_min &&
+        t->tm_sec <= 2 &&
+        a.lastTriggeredDay != today)
+    {
+      a.lastTriggeredDay = today;
+      triggerAlarmStart(i);
+    }
+  }
+
+  if (alarmActive) {
+    if (millis() - alarmStartMs >= alarmDurationMs) {
+      stopActiveAlarm();
+    }
+
+    if (!playingSequence && millis() - lastSequenceRepeat >= sequenceRepeatMs) {
+      startSequenceNow();
+    }
+
+    if (playingSequence) {
+      unsigned long dt = millis() - seqStartMs;
+
+      if (seqStage == 1 && dt >= 800) {
+        tone(buzzerPin, 1500, 300);
+        seqStage = 2;
+      } else if (seqStage == 2 && dt >= 1600) {
+        tone(buzzerPin, 2500, 300);
+        seqStage = 3;
+      } else if (seqStage == 3 && dt >= 1900) {
+        playingSequence = false;
+        seqStage = 0;
+        lastSequenceRepeat = millis();
+      }
+    }
+  }
+
+  delay(30);
 }
