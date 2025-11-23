@@ -10,7 +10,7 @@ const Stack = createStackNavigator();
 export default function AppNavigator() {
     return (
         <Stack.Navigator>
-            <Stack.Screen name="Alarms" component={AlarmsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Medtime" component={AlarmsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Config" component={ConfigScreen} options={{ title: 'Configurar Wi‑Fi' }} />
         </Stack.Navigator>
     );

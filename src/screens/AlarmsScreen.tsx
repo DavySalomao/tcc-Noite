@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView, Modal, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -14,6 +14,7 @@ export default function AlarmsScreen({ navigation }: any) {
     const [alarms, setAlarms] = useState<AlarmType[]>([]);
     const [alerts, setAlerts] = useState<AlertItem[]>([]);
     const [espIp, setEspIp] = useState('http://192.168.0.5');
+    const [showEspModal, setShowEspModal] = useState(false);
 
     const [horaAtual, setHoraAtual] = useState('--:--');
     const [status, setStatus] = useState('Desconhecido');
@@ -27,6 +28,7 @@ export default function AlarmsScreen({ navigation }: any) {
     const [activeField, setActiveField] = useState<'hour' | 'minute'>('hour');
 
     const activeFetchedRef = useRef<number | null>(null);
+    const [remainingMs, setRemainingMs] = useState<number | null>(null);
 
     useEffect(() => {
         (async () => {
@@ -63,6 +65,8 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const r = await AsyncStorage.getItem('alarms');
             if (r) setAlarms(JSON.parse(r));
+            const saved = await AsyncStorage.getItem('espIp');
+            if (saved) setEspIp(saved);
         } catch (e) { console.warn('load alarms', e); }
     }
 
@@ -92,6 +96,27 @@ export default function AlarmsScreen({ navigation }: any) {
 
     const abrirAlarmPicker = () => {
         setTempHour(''); setTempMinute(''); setTempName(''); setTempLed(0); setActiveField('hour'); setShowModal(true);
+    };
+
+    const saveEspIp = async (value?: string) => {
+        try {
+            const v = value ?? espIp;
+            await AsyncStorage.setItem('espIp', v);
+            setEspIp(v);
+            setShowEspModal(false);
+            Alert.alert('Salvo', `IP salvo: ${v}`);
+        } catch (e) { console.warn('saveEspIp', e); Alert.alert('Erro', 'Não foi possível salvar o IP'); }
+    };
+
+    const testEspConnection = async (ip?: string) => {
+        const base = ip ?? espIp;
+        try {
+            const res = await getActive(base);
+            Alert.alert('Resposta', JSON.stringify(res.data));
+        } catch (err: any) {
+            console.warn('testEspConnection failed', err);
+            Alert.alert('Erro de conexão', err?.message || String(err));
+        }
     };
 
     // digitação
@@ -153,22 +178,62 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const res = await getActive(espIp);
             if (res.data?.active) {
+                // sempre atualiza o estado do alarme ativo para garantir que o modal apareça
+                // if the ESP reports the alarm already acknowledged, clear local state
+                if (res.data.acknowledged) {
+                    activeFetchedRef.current = null;
+                    setActiveAlarm(null);
+                    await pushAlert('Alarme já confirmado', `Alarme ${res.data.name} já confirmado no dispositivo.`);
+                } else {
+                    setActiveAlarm(res.data);
+                }
+
                 if (activeFetchedRef.current !== res.data.id) {
                     activeFetchedRef.current = res.data.id;
-                    setActiveAlarm(res.data);
                     const msg = `Hora do remédio "${res.data.name}", LED ${res.data.led + 1}.`;
                     await pushAlert('Alerta de remédio', msg);
-                    try { await Notifications.scheduleNotificationAsync({ content: { title: 'Hora do remédio', body: msg, sound: 'default' }, trigger: null }); } catch { }
+                    try {
+                        await Notifications.scheduleNotificationAsync({ content: { title: 'Hora do remédio', body: msg, sound: 'default' }, trigger: null });
+                    } catch (e) { console.warn('scheduleNotificationAsync failed', e); }
                 }
             } else {
                 activeFetchedRef.current = null;
                 setActiveAlarm(null);
             }
-        } catch { }
+        } catch (err) {
+            console.warn('pollActive failed', err);
+            // opcional: atualizar status para feedback visual
+            setStatus('Falha na conexão com o ESP');
+        }
     };
 
+    
+
     const confirmarAlarmeAtivo = async (id?: number) => {
-        try { await stopAlarm(espIp, id); await pushAlert('Alarme confirmado', `Confirmado`); Alert.alert('Confirmado', 'Alarme interrompido.'); } catch { Alert.alert('Erro', 'Falha ao confirmar alarme.'); }
+        try {
+            const res = await stopAlarm(espIp, id);
+            // expect JSON { ok: true, acknowledged: true }
+            if (res?.data && (res.data.ok || res.status === 200)) {
+                const ack = res.data.acknowledged ?? true;
+                if (ack) {
+                    setActiveAlarm(null);
+                    activeFetchedRef.current = null;
+                    await pushAlert('Alarme confirmado', `Confirmado`);
+                    Alert.alert('Confirmado', 'Alarme interrompido.');
+                } else {
+                    // fallback: if ESP didn't explicitly ack, still clear
+                    setActiveAlarm(null);
+                    activeFetchedRef.current = null;
+                    await pushAlert('Alarme confirmado', `Confirmado`);
+                    Alert.alert('Confirmado', 'Alarme interrompido.');
+                }
+            } else {
+                throw new Error('Resposta inválida do ESP');
+            }
+        } catch (err) {
+            console.warn('confirmarAlarmeAtivo failed', err);
+            Alert.alert('Erro', 'Falha ao confirmar alarme.');
+        }
     };
 
     const atualizarStatus = async () => {
@@ -186,8 +251,44 @@ export default function AlarmsScreen({ navigation }: any) {
     // estado para banner ativo
     const [activeAlarm, setActiveAlarm] = useState<any>(null);
 
+    // atualizar contador local de tempo restante para mostrar no modal
+    useEffect(() => {
+        if (activeAlarm?.remainingMs != null) {
+            setRemainingMs(Number(activeAlarm.remainingMs));
+            const timer = setInterval(() => {
+                setRemainingMs((m) => (m != null ? Math.max(0, m - 1000) : m));
+            }, 1000);
+            return () => clearInterval(timer);
+        } else {
+            setRemainingMs(null);
+        }
+    }, [activeAlarm]);
+
+    const formatMs = (ms: number | null) => {
+        if (ms == null) return '--:--';
+        const total = Math.max(0, Math.floor(ms / 1000));
+        const minutes = Math.floor(total / 60).toString().padStart(2, '0');
+        const seconds = (total % 60).toString().padStart(2, '0');
+        return `${minutes}:${seconds}`;
+    };
+
     return (
         <View style={{ flex: 1 }}>
+            {/* Modal full-screen que aparece enquanto o alarme está ativo. Botão Confirmar interrompe o alarme no ESP */}
+            <Modal visible={!!activeAlarm} transparent animationType="fade">
+                <View style={styles.activeModalOverlay}>
+                    <View style={styles.activeModalBox}>
+                        <Text style={styles.activeModalTitle}>Hora do remédio</Text>
+                        <Text style={styles.activeModalText}>{activeAlarm?.name} — LED {activeAlarm?.led + 1}</Text>
+
+                        <Text style={styles.activeModalTimer}>{formatMs(remainingMs)}</Text>
+
+                        <TouchableOpacity style={styles.activeModalConfirm} onPress={() => confirmarAlarmeAtivo(activeAlarm?.id)}>
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Confirmar</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
             <View style={styles.topbar}>
                 <View style={styles.tabGroup}>
                     <TouchableOpacity onPress={() => setTab('alarms')} style={[styles.tabBtn, tab === 'alarms' && styles.tabActive]}>
@@ -349,4 +450,12 @@ const styles = StyleSheet.create({
 
     clearAlertsBtn: { backgroundColor: '#dc3545', padding: 8, borderRadius: 8 },
     clearAlertsBtnText: { color: '#fff' },
+    
+    /* Styles for active alarm fullscreen modal */
+    activeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
+    activeModalBox: { backgroundColor: '#fff', width: '90%', maxWidth: 420, padding: 24, borderRadius: 16, alignItems: 'center' },
+    activeModalTitle: { fontSize: 20, fontWeight: '800', color: '#D9534F', marginBottom: 8 },
+    activeModalText: { fontSize: 16, color: '#333', marginBottom: 8, textAlign: 'center' },
+    activeModalTimer: { fontSize: 32, fontWeight: '800', color: '#D9534F', marginBottom: 12 },
+    activeModalConfirm: { backgroundColor: '#1e6443', paddingVertical: 14, paddingHorizontal: 28, borderRadius: 12 },
 });

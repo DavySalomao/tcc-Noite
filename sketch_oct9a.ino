@@ -34,11 +34,6 @@ unsigned long seqStartMs = 0;
 uint8_t seqStage = 0;
 unsigned long lastSequenceRepeat = 0;
 
-
-// ----------------------------------------------------------
-// WIFI
-// ----------------------------------------------------------
-
 void setupWiFiAutomatico() {
   Serial.println("WiFiManager...");
 
@@ -56,11 +51,6 @@ void setupWiFiAutomatico() {
   }
 }
 
-
-// ----------------------------------------------------------
-// PINOS
-// ----------------------------------------------------------
-
 void setupPins() {
   for (uint8_t i = 0; i < 8; i++) {
     pinMode(ledPins[i], OUTPUT);
@@ -69,11 +59,6 @@ void setupPins() {
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
 }
-
-
-// ----------------------------------------------------------
-// SEQUÊNCIA DE CONFIRMAÇÃO (não bloqueante)
-// ----------------------------------------------------------
 
 void playConfirmation() {
   tone(buzzerPin, 2000, 120);
@@ -84,11 +69,6 @@ void playConfirmation() {
   delay(100);
   noTone(buzzerPin);
 }
-
-
-// ----------------------------------------------------------
-// ALARM START/STOP
-// ----------------------------------------------------------
 
 void stopActiveAlarm() {
   if (alarmActive && activeAlarmIdx >= 0) {
@@ -122,11 +102,6 @@ void triggerAlarmStart(uint8_t idx) {
   digitalWrite(ledPins[alarms[idx].ledIndex], HIGH);
   startSequenceNow();
 }
-
-
-// ----------------------------------------------------------
-// HTTP HANDLERS
-// ----------------------------------------------------------
 
 void addOrUpdateAlarm() {
   if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led")) {
@@ -234,11 +209,6 @@ void deleteAlarm() {
   server.send(200, "text/plain", "ok");
 }
 
-
-// ----------------------------------------------------------
-// SETUP
-// ----------------------------------------------------------
-
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -251,7 +221,13 @@ void setup() {
   server.on("/setAlarm", HTTP_POST, addOrUpdateAlarm);
   server.on("/listAlarms", HTTP_GET, listAlarms);
   server.on("/deleteAlarm", HTTP_POST, deleteAlarm);
-  server.on("/stopAlarm", HTTP_POST, []() { stopActiveAlarm(); server.send(200, "text/plain", "ok"); });
+  server.on("/stopAlarm", HTTP_POST, []() {
+    // optional: read id param if provided (ignored for now)
+    stopActiveAlarm();
+    // return JSON acknowledgement so the client can update UI immediately
+    server.send(200, "application/json", "{\"ok\":true,\"acknowledged\":true}");
+  });
+
   server.on("/active", HTTP_GET, []() {
     if (!alarmActive || activeAlarmIdx < 0) {
       server.send(200, "application/json", "{\"active\":false}");
@@ -259,22 +235,20 @@ void setup() {
     }
 
     Alarm &a = alarms[activeAlarmIdx];
-    char out[120];
+    unsigned long started = alarmStartMs;
+    long remaining = (long)alarmDurationMs - (long)(millis() - alarmStartMs);
+    if (remaining < 0) remaining = 0;
+    char out[300];
     snprintf(out, sizeof(out),
-             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\"}",
-             a.id, a.hour, a.minute, a.ledIndex, a.name);
+             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\",\"startedAt\":%lu,\"remainingMs\":%ld,\"acknowledged\":%d}",
+             a.id, a.hour, a.minute, a.ledIndex, a.name, started, remaining, 0);
 
     server.send(200, "application/json", out);
   });
 
   server.begin();
 }
-
-
-// ----------------------------------------------------------
-// LOOP
-// ----------------------------------------------------------
-
+ 
 void loop() {
   server.handleClient();
 
