@@ -397,6 +397,28 @@ void setup() {
   // Endpoints de status e configuração
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/configure", HTTP_POST, handleConfigure);
+  
+  // Endpoint para resetar EEPROM
+  server.on("/reset", HTTP_POST, []() {
+    Serial.println("=== Resetando EEPROM ===");
+    
+    // Limpa credenciais
+    WiFiCredentials emptyCreeds;
+    memset(&emptyCreeds, 0, sizeof(emptyCreeds));
+    emptyCreeds.configured = false;
+    EEPROM.put(0, emptyCreeds);
+    EEPROM.commit();
+    
+    Serial.println("EEPROM limpa!");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"EEPROM resetada\"}");
+    
+    // Toca som de confirmação
+    playConfirmation();
+    
+    // Reinicia em modo AP
+    delay(2000);
+    ESP.restart();
+  });
 
   server.begin();
   
@@ -411,6 +433,28 @@ void setup() {
  
 void loop() {
   server.handleClient();
+
+  // Comando via Serial para resetar EEPROM
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    
+    if (cmd.equalsIgnoreCase("RESET")) {
+      Serial.println("=== Comando RESET recebido ===");
+      Serial.println("Limpando EEPROM...");
+      
+      WiFiCredentials emptyCreeds;
+      memset(&emptyCreeds, 0, sizeof(emptyCreeds));
+      emptyCreeds.configured = false;
+      EEPROM.put(0, emptyCreeds);
+      EEPROM.commit();
+      
+      Serial.println("EEPROM limpa!");
+      Serial.println("Reiniciando em modo AP...");
+      delay(1000);
+      ESP.restart();
+    }
+  }
 
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);

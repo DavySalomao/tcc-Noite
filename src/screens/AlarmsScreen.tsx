@@ -6,6 +6,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import AlarmModal from '../components/AlarmModal';
 import { listAlarms, setAlarm, deleteAlarm, getStatus, getActive, stopAlarm } from '../services/esp';
+import { useEspIp } from '../hooks/useEspIp';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type AlarmType = { id: number; hour: string; minute: string; name: string; led: number; enabled: boolean };
@@ -14,8 +15,7 @@ type AlertItem = { id: number; timestamp: number; title: string; message: string
 export default function AlarmsScreen({ navigation }: any) {
     const [alarms, setAlarms] = useState<AlarmType[]>([]);
     const [alerts, setAlerts] = useState<AlertItem[]>([]);
-    const [espIp, setEspIp] = useState('http://192.168.0.5');
-    const [showEspModal, setShowEspModal] = useState(false);
+    const { espIp } = useEspIp();
 
     const [horaAtual, setHoraAtual] = useState('--:--');
     const [status, setStatus] = useState('Desconhecido');
@@ -53,7 +53,7 @@ export default function AlarmsScreen({ navigation }: any) {
         }, 1000);
         
         // Verifica status do ESP a cada 2 segundos
-        const statusInterval = setInterval(() => { pollActive(); atualizarStatus(); }, 2000);
+        const statusInterval = setInterval(() => { pollActive(); }, 2000);
         
         return () => {
             clearInterval(horaInterval);
@@ -80,8 +80,6 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const r = await AsyncStorage.getItem('alarms');
             if (r) setAlarms(JSON.parse(r));
-            const saved = await AsyncStorage.getItem('espIp');
-            if (saved) setEspIp(saved);
         } catch (e) { console.warn('load alarms', e); }
     }
 
@@ -113,20 +111,9 @@ export default function AlarmsScreen({ navigation }: any) {
         setTempHour(''); setTempMinute(''); setTempName(''); setTempLed(0); setActiveField('hour'); setShowModal(true);
     };
 
-    const saveEspIp = async (value?: string) => {
+    const testEspConnection = async () => {
         try {
-            const v = value ?? espIp;
-            await AsyncStorage.setItem('espIp', v);
-            setEspIp(v);
-            setShowEspModal(false);
-            Alert.alert('Salvo', `IP salvo: ${v}`);
-        } catch (e) { console.warn('saveEspIp', e); Alert.alert('Erro', 'Não foi possível salvar o IP'); }
-    };
-
-    const testEspConnection = async (ip?: string) => {
-        const base = ip ?? espIp;
-        try {
-            const res = await getActive(base);
+            const res = await getActive(espIp);
             Alert.alert('Resposta', JSON.stringify(res.data));
         } catch (err: any) {
             console.warn('testEspConnection failed', err);
@@ -191,10 +178,15 @@ export default function AlarmsScreen({ navigation }: any) {
 
     const pollActive = async () => {
         try {
+            console.log('[pollActive] Tentando conectar em:', espIp);
             const res = await getActive(espIp);
+            console.log('[pollActive] Resposta recebida:', res.status);
+            
+            // Se conseguiu conectar, marca como conectado
+            setStatus('Conectado');
+            
             if (res.data?.active) {
-                // sempre atualiza o estado do alarme ativo para garantir que o modal apareça
-                // if the ESP reports the alarm already acknowledged, clear local state
+                // Se o ESP reportou o alarme já confirmado, limpa estado local
                 if (res.data.acknowledged) {
                     activeFetchedRef.current = null;
                     setActiveAlarm(null);
@@ -222,21 +214,17 @@ export default function AlarmsScreen({ navigation }: any) {
                         // Silencioso: notificações podem falhar no Expo Go
                     }
                 }
-                // Se conseguiu conectar, atualiza status
-                if (status !== 'Conectado') {
-                    setStatus('Conectado');
-                }
             } else {
                 activeFetchedRef.current = null;
                 setActiveAlarm(null);
-                if (status !== 'Conectado') {
-                    setStatus('Conectado');
-                }
             }
-        } catch (err) {
-            // Silencioso: não loga warnings quando ESP não está conectado
-            // Apenas atualiza o status se ainda não foi atualizado
-            if (status === 'Desconhecido' || status === 'Conectado') {
+        } catch (err: any) {
+            // Se falhou ao conectar, atualiza status
+            console.log('[pollActive] Erro ao conectar:', err.message || err);
+            console.log('[pollActive] IP usado:', espIp);
+            if (espIp !== 'http://192.168.4.1') {
+                setStatus('Verifique sua rede WiFi');
+            } else {
                 setStatus('ESP desconectado');
             }
         }
@@ -268,21 +256,6 @@ export default function AlarmsScreen({ navigation }: any) {
         } catch (err) {
             console.warn('confirmarAlarmeAtivo failed', err);
             Alert.alert('Erro', 'Falha ao confirmar alarme.');
-        }
-    };
-
-    const atualizarStatus = async () => {
-        try {
-            const res = await getStatus(espIp);
-            if (res.data) {
-                // Atualiza apenas o status WiFi (hora vem do dispositivo)
-                setStatus('Conectado');
-            }
-        } catch { 
-            // Silencioso: não atualiza status se já foi definido por pollActive
-            if (status !== 'ESP desconectado') {
-                // Hora continua sendo atualizada pelo timer local
-            }
         }
     };
 
@@ -366,7 +339,7 @@ export default function AlarmsScreen({ navigation }: any) {
                 <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
                     <View style={styles.headerCard}>
                         <View style={{ alignItems: 'center' }}>
-                            <Image source={require('../../assets/images/logoTeste.png')} style={{ width: 275, height: 275, resizeMode: 'contain' }} />
+                            <Image source={require('../../assets/images/logoTeste.png')} style={{ width: 240, height: 240, resizeMode: 'contain' }} />
                         </View>
 
                         <Text style={styles.subtitle}>Seu assistente de medicação</Text>
@@ -382,6 +355,15 @@ export default function AlarmsScreen({ navigation }: any) {
                                 <Text style={styles.statusLabel}>Status:</Text>
                                 <Text style={[styles.statusValue, { color: status === 'Conectado' ? '#28a745' : '#dc3545' }]}>{status}</Text>
                             </View>
+                            
+                            {status === 'Verifique sua rede WiFi' && espIp !== 'http://192.168.4.1' && (
+                                <View style={styles.wifiWarning}>
+                                    <Ionicons name="warning" size={16} color="#f59e0b" />
+                                    <Text style={styles.wifiWarningText}>
+                                        Conecte seu celular à mesma rede WiFi do ESP para usar o app
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     </View>
 
@@ -592,6 +574,23 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         flex: 1,
         textAlign: 'right',
+    },
+    wifiWarning: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fef3c7',
+        padding: 12,
+        borderRadius: 8,
+        marginTop: 12,
+        gap: 8,
+        borderLeftWidth: 3,
+        borderLeftColor: '#f59e0b',
+    },
+    wifiWarningText: {
+        flex: 1,
+        fontSize: 12,
+        color: '#92400e',
+        lineHeight: 16,
     },
 
     sectionHeader: {
