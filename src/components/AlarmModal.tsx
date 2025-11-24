@@ -344,6 +344,7 @@ const styles = StyleSheet.create({
         fontSize: 32, 
         fontWeight: "700", 
         color: "#333",
+        textAlign: 'center',
     },
     delKey: {
         backgroundColor: "#dc3545",
