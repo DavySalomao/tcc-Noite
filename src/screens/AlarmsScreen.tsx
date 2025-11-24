@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView, Modal, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import AlarmModal from '../components/AlarmModal';
 import { listAlarms, setAlarm, deleteAlarm, getStatus, getActive, stopAlarm } from '../services/esp';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type AlarmType = { id: number; hour: string; minute: string; name: string; led: number; enabled: boolean };
 type AlertItem = { id: number; timestamp: number; title: string; message: string };
@@ -42,8 +43,22 @@ export default function AlarmsScreen({ navigation }: any) {
 
         load();
         loadAlerts();
-        const t = setInterval(() => { pollActive(); atualizarStatus(); }, 2000);
-        return () => clearInterval(t);
+        
+        // Atualiza hora do dispositivo a cada segundo (sem requisição HTTP)
+        const horaInterval = setInterval(() => {
+            const now = new Date();
+            const h = now.getHours().toString().padStart(2, '0');
+            const m = now.getMinutes().toString().padStart(2, '0');
+            setHoraAtual(`${h}:${m}`);
+        }, 1000);
+        
+        // Verifica status do ESP a cada 2 segundos
+        const statusInterval = setInterval(() => { pollActive(); atualizarStatus(); }, 2000);
+        
+        return () => {
+            clearInterval(horaInterval);
+            clearInterval(statusInterval);
+        };
     }, []);
 
     async function registerForPushNotificationsAsync() {
@@ -193,17 +208,37 @@ export default function AlarmsScreen({ navigation }: any) {
                     const msg = `Hora do remédio "${res.data.name}", LED ${res.data.led + 1}.`;
                     await pushAlert('Alerta de remédio', msg);
                     try {
-                        await Notifications.scheduleNotificationAsync({ content: { title: 'Hora do remédio', body: msg, sound: 'default' }, trigger: null });
-                    } catch (e) { console.warn('scheduleNotificationAsync failed', e); }
+                        // Notificações locais funcionam no Expo Go
+                        await Notifications.scheduleNotificationAsync({ 
+                            content: { 
+                                title: '💊 Hora do Remédio!', 
+                                body: msg, 
+                                sound: 'default',
+                                priority: Notifications.AndroidNotificationPriority.HIGH,
+                            }, 
+                            trigger: null 
+                        });
+                    } catch (e) { 
+                        // Silencioso: notificações podem falhar no Expo Go
+                    }
+                }
+                // Se conseguiu conectar, atualiza status
+                if (status !== 'Conectado') {
+                    setStatus('Conectado');
                 }
             } else {
                 activeFetchedRef.current = null;
                 setActiveAlarm(null);
+                if (status !== 'Conectado') {
+                    setStatus('Conectado');
+                }
             }
         } catch (err) {
-            console.warn('pollActive failed', err);
-            // opcional: atualizar status para feedback visual
-            setStatus('Falha na conexão com o ESP');
+            // Silencioso: não loga warnings quando ESP não está conectado
+            // Apenas atualiza o status se ainda não foi atualizado
+            if (status === 'Desconhecido' || status === 'Conectado') {
+                setStatus('ESP desconectado');
+            }
         }
     };
 
@@ -240,12 +275,15 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const res = await getStatus(espIp);
             if (res.data) {
-                // depending on esp response shape
-                const hora = (res.data.hora || res.data.time || res.data.timeString || '').toString();
-                setHoraAtual(hora || '--:--');
+                // Atualiza apenas o status WiFi (hora vem do dispositivo)
                 setStatus('Conectado');
             }
-        } catch { setStatus('Falha na conexão com o ESP'); setHoraAtual('--:--'); }
+        } catch { 
+            // Silencioso: não atualiza status se já foi definido por pollActive
+            if (status !== 'ESP desconectado') {
+                // Hora continua sendo atualizada pelo timer local
+            }
+        }
     };
 
     // estado para banner ativo
@@ -273,18 +311,25 @@ export default function AlarmsScreen({ navigation }: any) {
     };
 
     return (
-        <View style={{ flex: 1 }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#2C674D' }}>
+            <View style={{ flex: 1, backgroundColor: '#f8f9fa' }}>
             {/* Modal full-screen que aparece enquanto o alarme está ativo. Botão Confirmar interrompe o alarme no ESP */}
             <Modal visible={!!activeAlarm} transparent animationType="fade">
                 <View style={styles.activeModalOverlay}>
                     <View style={styles.activeModalBox}>
-                        <Text style={styles.activeModalTitle}>Hora do remédio</Text>
-                        <Text style={styles.activeModalText}>{activeAlarm?.name} — LED {activeAlarm?.led + 1}</Text>
+                        <MaterialCommunityIcons name="pill" size={64} color="#D9534F" style={{ marginBottom: 16 }} />
+                        <Text style={styles.activeModalTitle}>⏰ Hora do Remédio!</Text>
+                        <Text style={styles.activeModalText}>{activeAlarm?.name}</Text>
+                        <View style={styles.ledBadge}>
+                            <MaterialCommunityIcons name="led-on" size={20} color="#fff" />
+                            <Text style={styles.ledBadgeText}>LED {activeAlarm?.led + 1}</Text>
+                        </View>
 
-                        <Text style={styles.activeModalTimer}>{formatMs(remainingMs)}</Text>
+                        <Text style={styles.activeModalTimer}>⏱ {formatMs(remainingMs)}</Text>
 
                         <TouchableOpacity style={styles.activeModalConfirm} onPress={() => confirmarAlarmeAtivo(activeAlarm?.id)}>
-                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Confirmar</Text>
+                            <Ionicons name="checkmark-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Confirmar Medicação</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -292,22 +337,25 @@ export default function AlarmsScreen({ navigation }: any) {
             <View style={styles.topbar}>
                 <View style={styles.tabGroup}>
                     <TouchableOpacity onPress={() => setTab('alarms')} style={[styles.tabBtn, tab === 'alarms' && styles.tabActive]}>
+                        <Ionicons name="alarm" size={18} color="#fff" style={{ marginRight: 4 }} />
                         <Text style={[styles.tabText, tab === 'alarms' && styles.tabTextActive]}>Alarmes</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity onPress={() => setTab('alerts')} style={[styles.tabBtn, tab === 'alerts' && styles.tabActive]}>
+                        <Ionicons name="notifications" size={18} color="#fff" style={{ marginRight: 4 }} />
                         <Text style={[styles.tabText, tab === 'alerts' && styles.tabTextActive]}>Alertas ({alerts.length})</Text>
                     </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity onPress={() => navigation.navigate('Config')} style={styles.gearBtn}>
-                    <Ionicons name="settings" size={20} color="#fff" />
+                    <Ionicons name="settings" size={24} color="#fff" />
                 </TouchableOpacity>
             </View>
 
             {activeAlarm && (
                 <View style={styles.activeBanner}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>ALERTA: {activeAlarm.name} — LED {activeAlarm.led + 1}</Text>
+                    <MaterialCommunityIcons name="bell-ring" size={24} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#fff', fontWeight: '700', flex: 1 }}>ALERTA: {activeAlarm.name}</Text>
                     <TouchableOpacity style={styles.confirmBtn} onPress={() => confirmarAlarmeAtivo(activeAlarm.id)}>
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Confirmar</Text>
                     </TouchableOpacity>
@@ -316,146 +364,506 @@ export default function AlarmsScreen({ navigation }: any) {
 
             {tab === 'alarms' ? (
                 <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
-                    <View style={{ alignItems: 'center' }}>
-                        {/* path from src/screens -> ../../assets */}
-                        <Image source={require('../../assets/images/logoTeste.png')} style={{ width: 250, height: 250, resizeMode: 'contain', marginTop: -50 }} />
+                    <View style={styles.headerCard}>
+                        <View style={{ alignItems: 'center' }}>
+                            <Image source={require('../../assets/images/logoTeste.png')} style={{ width: 275, height: 275, resizeMode: 'contain' }} />
+                        </View>
+
+                        <Text style={styles.subtitle}>Seu assistente de medicação</Text>
+                        
+                        <View style={styles.statusCard}>
+                            <View style={styles.statusRow}>
+                                <Ionicons name="time" size={20} color="#2C674D" />
+                                <Text style={styles.statusLabel}>Hora atual:</Text>
+                                <Text style={styles.statusValue}>{horaAtual}</Text>
+                            </View>
+                            <View style={styles.statusRow}>
+                                <Ionicons name={status === 'Conectado' ? 'wifi' : 'wifi-outline'} size={20} color={status === 'Conectado' ? '#28a745' : '#dc3545'} />
+                                <Text style={styles.statusLabel}>Status:</Text>
+                                <Text style={[styles.statusValue, { color: status === 'Conectado' ? '#28a745' : '#dc3545' }]}>{status}</Text>
+                            </View>
+                        </View>
                     </View>
 
-                    <Text style={styles.title}>Alarme Medicinal</Text>
-                    <Text style={styles.hora}>Hora atual: {horaAtual}</Text>
+                    <View style={styles.sectionHeader}>
+                        <MaterialCommunityIcons name="pill" size={24} color="#2C674D" />
+                        <Text style={styles.sectionTitle}>Meus Alarmes</Text>
+                    </View>
+
+                    {alarms.length === 0 && (
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="alarm-off" size={64} color="#ccc" />
+                            <Text style={styles.emptyText}>Nenhum alarme configurado</Text>
+                            <Text style={styles.emptySubtext}>Adicione um alarme para começar</Text>
+                        </View>
+                    )}
 
                     {alarms.map((alarm) => (
                         <View key={alarm.id} style={styles.alarmCard}>
-                            <View style={styles.rowBetween}>
-                                <View>
-                                    <Text style={styles.alarmTitle}>{alarm.hour}:{alarm.minute}</Text>
-                                    <Text style={styles.alarmName}>{alarm.name} — LED {alarm.led + 1}</Text>
+                            <View style={styles.alarmHeader}>
+                                <View style={styles.alarmTimeContainer}>
+                                    <Text style={styles.alarmTime}>{alarm.hour}:{alarm.minute}</Text>
+                                    <View style={styles.alarmInfo}>
+                                        <MaterialCommunityIcons name="pill" size={16} color="#666" />
+                                        <Text style={styles.alarmName}>{alarm.name}</Text>
+                                    </View>
                                 </View>
 
-                                <Switch value={alarm.enabled} onValueChange={() => alternarAlarme(alarm.id)} thumbColor={alarm.enabled ? '#41A579' : '#ccc'} trackColor={{ false: '#ccc', true: '#41A579' }} />
+                                <Switch 
+                                    value={alarm.enabled} 
+                                    onValueChange={() => alternarAlarme(alarm.id)} 
+                                    thumbColor={alarm.enabled ? '#fff' : '#f4f3f4'}
+                                    trackColor={{ false: '#d1d5db', true: '#41A579' }} 
+                                    ios_backgroundColor="#d1d5db"
+                                />
                             </View>
 
-                            <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
-                                <TouchableOpacity style={[styles.btn, styles.deleteBtn, { flex: 1 }]} onPress={() => excluirAlarme(alarm.id)}>
-                                    <Text style={styles.deleteBtnText}>Excluir</Text>
-                                </TouchableOpacity>
+                            <View style={styles.ledIndicator}>
+                                <MaterialCommunityIcons name="led-on" size={16} color="#41A579" />
+                                <Text style={styles.ledText}>LED {alarm.led + 1}</Text>
                             </View>
+
+                            <TouchableOpacity style={styles.deleteBtn} onPress={() => excluirAlarme(alarm.id)}>
+                                <Ionicons name="trash" size={18} color="#fff" />
+                                <Text style={styles.deleteBtnText}>Excluir</Text>
+                            </TouchableOpacity>
                         </View>
                     ))}
 
-                    <TouchableOpacity style={[styles.btn, styles.addBtn]} onPress={abrirAlarmPicker}>
-                        <Text style={styles.btnText}>Adicionar Alarme</Text>
+                    <TouchableOpacity style={styles.addBtn} onPress={abrirAlarmPicker}>
+                        <Ionicons name="add-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
+                        <Text style={styles.addBtnText}>Adicionar Alarme</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={[styles.btn, styles.clearBtn, { marginTop: 10 }]} onPress={async () => { await saveAlarms([]); }}>
-                        <Text style={styles.btnText}>Limpar Memória</Text>
+                    <TouchableOpacity style={styles.clearBtn} onPress={async () => { 
+                        Alert.alert('Confirmar', 'Deseja limpar todos os alarmes?', [
+                            { text: 'Cancelar', style: 'cancel' },
+                            { text: 'Limpar', onPress: async () => await saveAlarms([]), style: 'destructive' }
+                        ]);
+                    }}>
+                        <Ionicons name="trash-bin" size={20} color="#fff" style={{ marginRight: 8 }} />
+                        <Text style={styles.clearBtnText}>Limpar Todos os Alarmes</Text>
                     </TouchableOpacity>
 
-                    <Text style={styles.status}>Status: {status}</Text>
+                    <View style={{ height: 40 }} />
 
                     <AlarmModal visible={showModal} tempHour={tempHour} tempMinute={tempMinute} tempName={tempName} tempLed={tempLed} activeField={activeField} onChangeName={setTempName} onSelectField={setActiveField} onAddNumber={adicionarNumero} onDelete={apagar} onSelectLed={setTempLed} onClose={() => setShowModal(false)} onConfirm={salvarNovoAlarme} />
                 </ScrollView>
             ) : (
-                <View style={{ flex: 1, backgroundColor: '#fff' }}>
-                    <View style={{ padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0f0f0' }}>
-                        <Text style={{ color: '#333' }}>Histórico de alertas</Text>
-                        <TouchableOpacity onPress={async () => { await saveAlerts([]); }} style={styles.clearAlertsBtn}>
+                <View style={{ flex: 1, backgroundColor: '#f8f9fa' }}>
+                    <View style={styles.alertsHeader}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Ionicons name="time-outline" size={24} color="#333" style={{ marginRight: 8 }} />
+                            <Text style={styles.alertsHeaderText}>Histórico de Alertas</Text>
+                        </View>
+                        <TouchableOpacity onPress={async () => { 
+                            Alert.alert('Confirmar', 'Deseja limpar o histórico?', [
+                                { text: 'Cancelar', style: 'cancel' },
+                                { text: 'Limpar', onPress: async () => await saveAlerts([]), style: 'destructive' }
+                            ]);
+                        }} style={styles.clearAlertsBtn}>
+                            <Ionicons name="trash" size={18} color="#fff" />
                             <Text style={styles.clearAlertsBtnText}>Limpar</Text>
                         </TouchableOpacity>
                     </View>
 
-                    <FlatList data={alerts} keyExtractor={(it) => String(it.id)} contentContainerStyle={{ padding: 16 }} ListEmptyComponent={<Text style={{ color: '#888', textAlign: 'center', marginTop: 20 }}>Sem alertas</Text>} renderItem={({ item }) => (
-                        <View style={{ backgroundColor: '#f5f5f5', padding: 12, borderRadius: 10, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: '#41A579' }}>
-                            <Text style={{ color: '#333', fontWeight: '700' }}>{item.title}</Text>
-                            <Text style={{ color: '#666', marginTop: 6, fontSize: 12 }}>{new Date(item.timestamp).toLocaleString()}</Text>
-                            <Text style={{ color: '#555', marginTop: 8 }}>{item.message}</Text>
+                    <FlatList data={alerts} keyExtractor={(it) => String(it.id)} contentContainerStyle={{ padding: 16 }} ListEmptyComponent={
+                        <View style={styles.emptyState}>
+                            <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
+                            <Text style={styles.emptyText}>Nenhum alerta</Text>
+                            <Text style={styles.emptySubtext}>Os alertas aparecerão aqui</Text>
+                        </View>
+                    } renderItem={({ item }) => (
+                        <View style={styles.alertCard}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                                <Ionicons name="notifications" size={20} color="#2C674D" style={{ marginRight: 8 }} />
+                                <Text style={styles.alertTitle}>{item.title}</Text>
+                            </View>
+                            <Text style={styles.alertTime}>{new Date(item.timestamp).toLocaleString('pt-BR')}</Text>
+                            <Text style={styles.alertMessage}>{item.message}</Text>
                         </View>
                     )} />
                 </View>
             )}
-        </View>
+            </View>
+        </SafeAreaView>
     );
 }
 
 
 const styles = StyleSheet.create({
-    container: { flexGrow: 1, padding: 16, backgroundColor: '#fff' },
+    container: { flexGrow: 1, padding: 16, backgroundColor: '#f8f9fa' },
 
-    topbar: { flexDirection: 'row', backgroundColor: '#2C674D', paddingVertical: 10, borderBottomColor: '#ddd' }, // Fundo verde
-        tabGroup: { flexDirection: 'row', alignItems: 'center', paddingLeft: 12 },
-        tabBtn: { paddingVertical: 8, paddingHorizontal: 18, borderRadius: 6, marginRight: 8 },
-        tabActive: { backgroundColor: '#4cac82ff' },
-        tabText: { color: '#fff', fontWeight: '600' },
-        tabTextActive: { color: '#fff', fontWeight: '700' },
-        gearBtn: { position: 'absolute', right: 10, top: 8, padding: 8 },
+    topbar: { 
+        flexDirection: 'row', 
+        backgroundColor: '#2C674D', 
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    tabGroup: { flexDirection: 'row', alignItems: 'center', paddingLeft: 8, flex: 1 },
+    tabBtn: { 
+        paddingVertical: 10, 
+        paddingHorizontal: 16, 
+        borderRadius: 20, 
+        marginRight: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    tabActive: { backgroundColor: '#41A579' },
+    tabText: { color: '#e0e0e0', fontWeight: '600', fontSize: 14 },
+    tabTextActive: { color: '#fff', fontWeight: '700' },
+    gearBtn: { padding: 8 },
 
     activeBanner: {
         backgroundColor: '#D9534F',
-        padding: 12,
+        padding: 16,
         alignItems: 'center',
         flexDirection: 'row',
         justifyContent: 'space-between',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 5,
     },
-    confirmBtn: { backgroundColor: '#1e6443', padding: 8, borderRadius: 8 },
+    confirmBtn: { 
+        backgroundColor: '#1e6443', 
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+        elevation: 3,
+    },
 
-    title: { fontSize: 24, marginBottom: 8, fontWeight: '700', color: '#333', textAlign: 'center' },
-    hora: { fontSize: 14, marginBottom: 20, color: '#666', textAlign: 'center' },
+    headerCard: {
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        padding: 20,
+        marginBottom: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+    },
 
-    alarmCard: { backgroundColor: '#F5F5F5', borderRadius: 16, padding: 20, marginBottom: 16, borderLeftWidth: 6, borderLeftColor: '#41A579', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 3 },
+    title: { 
+        fontSize: 32, 
+        marginTop: 12,
+        marginBottom: 4,
+        fontWeight: '800', 
+        color: '#2C674D', 
+        textAlign: 'center',
+    },
+    subtitle: {
+        fontSize: 16,
+        color: '#666',
+        textAlign: 'center',
+        marginBottom: 20,
+    },
 
-    alarmTitle: { fontSize: 24, fontWeight: '800', color: '#333' },
-    alarmName: { color: '#666', fontSize: 14, marginTop: 4 },
-    rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    statusCard: {
+        backgroundColor: '#f8f9fa',
+        borderRadius: 12,
+        padding: 16,
+        gap: 12,
+    },
+    statusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    statusLabel: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '600',
+    },
+    statusValue: {
+        fontSize: 16,
+        color: '#2C674D',
+        fontWeight: '700',
+        flex: 1,
+        textAlign: 'right',
+    },
 
-    btn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center' },
-    btnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-    addBtn: { backgroundColor: '#2C674D', marginTop: 10 },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+        gap: 8,
+    },
+    sectionTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#2C674D',
+    },
 
-    deleteBtn: { backgroundColor: '#dc3545', flex: 1 },
-    deleteBtnText: { color: '#fff', fontWeight: '700' },
+    emptyState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 60,
+    },
+    emptyText: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#999',
+        marginTop: 16,
+    },
+    emptySubtext: {
+        fontSize: 14,
+        color: '#bbb',
+        marginTop: 4,
+    },
 
-    clearBtn: { backgroundColor: '#dc3545' },
+    alarmCard: { 
+        backgroundColor: '#fff', 
+        borderRadius: 20, 
+        padding: 20, 
+        marginBottom: 16, 
+        borderLeftWidth: 6, 
+        borderLeftColor: '#41A579', 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 2 }, 
+        shadowOpacity: 0.08, 
+        shadowRadius: 8, 
+        elevation: 3,
+    },
 
-    status: { marginTop: 20, fontSize: 14, textAlign: 'center', color: '#888' },
+    alarmHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    alarmTimeContainer: {
+        flex: 1,
+    },
+    alarmTime: { 
+        fontSize: 36, 
+        fontWeight: '800', 
+        color: '#2C674D',
+        letterSpacing: 2,
+    },
+    alarmInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 4,
+    },
+    alarmName: { 
+        color: '#666', 
+        fontSize: 16, 
+        fontWeight: '500',
+    },
 
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-    modalBox: { backgroundColor: '#fff', padding: 24, borderRadius: 16, width: '90%', maxWidth: 400, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5, elevation: 10 },
-    modalTitle: { color: '#333', fontSize: 20, fontWeight: '600', marginBottom: 16 },
+    ledIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e8f5e9',
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 20,
+        alignSelf: 'flex-start',
+        marginBottom: 12,
+        gap: 4,
+    },
+    ledText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#2C674D',
+    },
 
-    input: { width: '100%', backgroundColor: '#f5f5f5', color: '#333', borderRadius: 10, padding: 12, marginBottom: 20, fontSize: 16, borderWidth: 1, borderColor: '#ddd' },
+    deleteBtn: { 
+        backgroundColor: '#dc3545', 
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    deleteBtnText: { 
+        color: '#fff', 
+        fontWeight: '700',
+        fontSize: 15,
+    },
 
-    modalRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+    addBtn: { 
+        backgroundColor: '#2C674D', 
+        paddingVertical: 16,
+        borderRadius: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 5,
+    },
+    addBtnText: { 
+        color: '#fff', 
+        fontWeight: '700', 
+        fontSize: 18,
+    },
 
-    displayText: { fontSize: 48, color: '#333', fontWeight: '800', width: 80, textAlign: 'center', paddingBottom: 5 },
-    modalDots: { color: '#333', fontSize: 36, marginHorizontal: 5 },
+    clearBtn: { 
+        backgroundColor: '#6c757d',
+        paddingVertical: 14,
+        borderRadius: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 12,
+    },
+    clearBtnText: {
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: 15,
+    },
 
-    activeDisplay: { borderBottomWidth: 3, borderBottomColor: '#2C674D' },
-    invalidDisplay: { color: '#dc3545' },
+    alertsHeader: {
+        padding: 16,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
+    },
+    alertsHeaderText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#333',
+    },
 
-    keypad: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '100%', marginBottom: 20 },
-    key: { backgroundColor: '#eee', width: '28%', margin: '2%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 12, borderWidth: 1, borderColor: '#ddd' },
-    keyText: { color: '#333', fontSize: 28, fontWeight: '700' },
+    alertCard: {
+        backgroundColor: '#fff',
+        padding: 16,
+        borderRadius: 16,
+        marginBottom: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#2C674D',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    alertTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#333',
+        flex: 1,
+    },
+    alertTime: {
+        fontSize: 12,
+        color: '#999',
+        marginBottom: 8,
+    },
+    alertMessage: {
+        fontSize: 14,
+        color: '#555',
+        lineHeight: 20,
+    },
 
-    deleteKey: { backgroundColor: '#6c757d', width: '28%', margin: '2%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center', borderRadius: 12 },
-    deleteKeyText: { color: '#fff', fontSize: 28, fontWeight: '700' },
-
-    modalButtons: { flexDirection: 'row', width: '100%', gap: 10, marginTop: 10 },
-    cancelBtn: { backgroundColor: '#6c757d' },
-    cancelBtnText: { color: '#fff', fontWeight: '700' },
-
-    ledButtonsContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 10 },
-    dayBtn: { backgroundColor: '#e9ecef', padding: 8, borderRadius: 10, alignItems: 'center', flex: 1, marginHorizontal: 2, borderWidth: 1, borderColor: '#ddd' },
-    ledActive: { backgroundColor: '#41A579' },
-    dayBtnText: { color: '#333', fontWeight: '600' },
-
-    clearAlertsBtn: { backgroundColor: '#dc3545', padding: 8, borderRadius: 8 },
-    clearAlertsBtnText: { color: '#fff' },
+    clearAlertsBtn: { 
+        backgroundColor: '#dc3545', 
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    clearAlertsBtnText: { 
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: 14,
+    },
     
     /* Styles for active alarm fullscreen modal */
-    activeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
-    activeModalBox: { backgroundColor: '#fff', width: '90%', maxWidth: 420, padding: 24, borderRadius: 16, alignItems: 'center' },
-    activeModalTitle: { fontSize: 20, fontWeight: '800', color: '#D9534F', marginBottom: 8 },
-    activeModalText: { fontSize: 16, color: '#333', marginBottom: 8, textAlign: 'center' },
-    activeModalTimer: { fontSize: 32, fontWeight: '800', color: '#D9534F', marginBottom: 12 },
-    activeModalConfirm: { backgroundColor: '#1e6443', paddingVertical: 14, paddingHorizontal: 28, borderRadius: 12 },
+    activeModalOverlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.8)', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+    },
+    activeModalBox: { 
+        backgroundColor: '#fff', 
+        width: '90%', 
+        maxWidth: 420, 
+        padding: 32, 
+        borderRadius: 24, 
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 16,
+        elevation: 20,
+    },
+    activeModalTitle: { 
+        fontSize: 28, 
+        fontWeight: '800', 
+        color: '#D9534F', 
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    activeModalText: { 
+        fontSize: 20, 
+        color: '#333', 
+        marginBottom: 16, 
+        textAlign: 'center',
+        fontWeight: '600',
+    },
+    ledBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#D9534F',
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 20,
+        marginBottom: 16,
+        gap: 6,
+    },
+    ledBadgeText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 14,
+    },
+    activeModalTimer: { 
+        fontSize: 48, 
+        fontWeight: '800', 
+        color: '#2C674D', 
+        marginBottom: 24,
+        letterSpacing: 4,
+    },
+    activeModalConfirm: { 
+        backgroundColor: '#28a745', 
+        paddingVertical: 16, 
+        paddingHorizontal: 32, 
+        borderRadius: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+    },
 });

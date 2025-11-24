@@ -1,12 +1,30 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>
+#include <EEPROM.h>
 #include <time.h>
 
 ESP8266WebServer server(80);
 
+// LEDs externos conectados aos pinos D0-D7
+// NOTA: O pino GPIO2 (índice 4 no array) é compartilhado com o LED embutido da placa
+// O LED embutido é controlado com lógica invertida (HIGH=apagado, LOW=aceso)
 const uint8_t ledPins[8] = { 16, 5, 4, 0, 2, 14, 12, 13 };
 const uint8_t buzzerPin = 15;
+const uint8_t ledBuiltIn = 2; // LED embutido da placa (GPIO2 / D4)
+
+// Configuração de rede padrão (AP Mode)
+const char* ap_ssid = "Medtime";
+const char* ap_password = "12345678";
+IPAddress ap_ip(192, 168, 4, 1);
+IPAddress ap_gateway(192, 168, 4, 1);
+IPAddress ap_subnet(255, 255, 255, 0);
+
+// Estrutura para salvar credenciais na EEPROM
+struct WiFiCredentials {
+  char ssid[32];
+  char password[64];
+  bool configured;
+};
 
 struct Alarm {
   uint8_t id;
@@ -34,20 +52,142 @@ unsigned long seqStartMs = 0;
 uint8_t seqStage = 0;
 unsigned long lastSequenceRepeat = 0;
 
-void setupWiFiAutomatico() {
-  Serial.println("WiFiManager...");
+bool isAPMode = true;
 
-  WiFiManager wm;
-  wm.setConnectTimeout(10);
-  wm.setConfigPortalTimeout(300);
-
-  bool ok = wm.autoConnect("Medtime", "12345678");
-
-  if (!ok) {
-    Serial.println("Aguardando configuração...");
+void setupWiFi() {
+  Serial.println("=== Iniciando WiFi ===");
+  
+  EEPROM.begin(512);
+  
+  // Tenta ler credenciais salvas
+  WiFiCredentials creds;
+  EEPROM.get(0, creds);
+  
+  // Se há credenciais salvas, tenta conectar
+  if (creds.configured && strlen(creds.ssid) > 0) {
+    Serial.println("Credenciais encontradas, tentando conectar...");
+    Serial.print("SSID: ");
+    Serial.println(creds.ssid);
+    
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(creds.ssid, creds.password);
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    Serial.println();
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Conectado à rede WiFi!");
+      Serial.print("IP: ");
+      Serial.println(WiFi.localIP());
+      isAPMode = false;
+      return;
+    } else {
+      Serial.println("Falha ao conectar. Iniciando modo AP...");
+    }
   } else {
+    Serial.println("Nenhuma credencial salva. Iniciando modo AP...");
+  }
+  
+  // Inicia em modo AP com IP fixo
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
+  WiFi.softAP(ap_ssid, ap_password);
+  
+  Serial.println("Modo AP ativo");
+  Serial.print("SSID: ");
+  Serial.println(ap_ssid);
+  Serial.print("IP: ");
+  Serial.println(WiFi.softAPIP());
+  Serial.println("Aguardando configuração via /configure");
+  
+  isAPMode = true;
+}
+
+// Função para reconfigurar WiFi via endpoint
+void handleConfigure() {
+  if (!server.hasArg("ssid")) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"missing_ssid\"}");
+    return;
+  }
+
+  String ssid = server.arg("ssid");
+  String pass = server.hasArg("pass") ? server.arg("pass") : "";
+
+  Serial.println("=== Recebendo configuração WiFi ===");
+  Serial.print("SSID: ");
+  Serial.println(ssid);
+
+  // Salva credenciais na EEPROM
+  WiFiCredentials creds;
+  memset(&creds, 0, sizeof(creds));
+  strncpy(creds.ssid, ssid.c_str(), sizeof(creds.ssid) - 1);
+  strncpy(creds.password, pass.c_str(), sizeof(creds.password) - 1);
+  creds.configured = true;
+  
+  EEPROM.put(0, creds);
+  EEPROM.commit();
+  Serial.println("Credenciais salvas na EEPROM");
+
+  // Muda para modo Station e tenta conectar
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  
+  // Aguarda até 20 segundos para conectar
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("✓ Conectado com sucesso!");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
+    
+    isAPMode = false;
+    
+    // Retorna sucesso com o novo IP
+    char response[100];
+    snprintf(response, sizeof(response), 
+             "{\"success\":true,\"ip\":\"%s\"}", 
+             WiFi.localIP().toString().c_str());
+    server.send(200, "application/json", response);
+    
+    playConfirmation();
+    
+    // Reinicia após 2 segundos para consolidar conexão
+    delay(2000);
+    ESP.restart();
+  } else {
+    Serial.println("✗ Falha ao conectar");
+    
+    // Limpa credenciais inválidas
+    WiFiCredentials emptyCreeds;
+    memset(&emptyCreeds, 0, sizeof(emptyCreeds));
+    emptyCreeds.configured = false;
+    EEPROM.put(0, emptyCreeds);
+    EEPROM.commit();
+    
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"connection_failed\"}");
+    
+    // Volta para modo AP
+    delay(1000);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
+    WiFi.softAP(ap_ssid, ap_password);
+    isAPMode = true;
+    
+    Serial.println("Voltou para modo AP");
+    Serial.print("IP: ");
+    Serial.println(WiFi.softAPIP());
   }
 }
 
@@ -58,6 +198,10 @@ void setupPins() {
   }
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
+  
+  // Desliga o LED embutido da placa (LOW = aceso, HIGH = apagado no ESP8266)
+  pinMode(ledBuiltIn, OUTPUT);
+  digitalWrite(ledBuiltIn, HIGH);
 }
 
 void playConfirmation() {
@@ -180,11 +324,14 @@ void handleStatus() {
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
 
-  char out[60];
+  String wifiStatus = isAPMode ? "ap_mode" : (WiFi.isConnected() ? "connected" : "disconnected");
+
+  char out[100];
   snprintf(out, sizeof(out),
-           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\"}",
+           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\",\"ip\":\"%s\"}",
            t->tm_hour, t->tm_min,
-           WiFi.isConnected() ? "connected" : "disconnected");
+           wifiStatus.c_str(),
+           isAPMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str());
 
   server.send(200, "application/json", out);
 }
@@ -214,17 +361,18 @@ void setup() {
   delay(200);
 
   setupPins();
-  setupWiFiAutomatico();
+  setupWiFi();
 
   configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
+  // Endpoints de alarmes
   server.on("/setAlarm", HTTP_POST, addOrUpdateAlarm);
   server.on("/listAlarms", HTTP_GET, listAlarms);
   server.on("/deleteAlarm", HTTP_POST, deleteAlarm);
+  
+  // Endpoints de controle de alarme ativo
   server.on("/stopAlarm", HTTP_POST, []() {
-    // optional: read id param if provided (ignored for now)
     stopActiveAlarm();
-    // return JSON acknowledgement so the client can update UI immediately
     server.send(200, "application/json", "{\"ok\":true,\"acknowledged\":true}");
   });
 
@@ -246,7 +394,19 @@ void setup() {
     server.send(200, "application/json", out);
   });
 
+  // Endpoints de status e configuração
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/configure", HTTP_POST, handleConfigure);
+
   server.begin();
+  
+  Serial.println("=== Servidor HTTP iniciado ===");
+  if (isAPMode) {
+    Serial.println("Aguardando conexão no IP: 192.168.4.1");
+  } else {
+    Serial.print("Servidor disponível em: ");
+    Serial.println(WiFi.localIP());
+  }
 }
  
 void loop() {
