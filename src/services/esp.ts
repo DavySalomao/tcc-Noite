@@ -2,12 +2,10 @@ import axios from 'axios';
 
 export const defaultAP = 'http://192.168.4.1';
 
-// Configuração global do axios com timeout aumentado
 const axiosInstance = axios.create({
-    timeout: 8000, // 8 segundos de timeout
+    timeout: 8000,
 });
 
-// Função auxiliar para retry automático
 async function retryRequest<T>(
     fn: () => Promise<T>,
     retries: number = 2,
@@ -53,14 +51,12 @@ export async function deleteAlarm(espIp: string, id: number) {
 
 export async function getStatus(espIp: string) {
     const base = espIp || defaultAP;
-    // Status check sem retry para não acumular requisições
     return axiosInstance.get(`${base}/status`, { timeout: 5000 });
 }
 
 
 export async function getActive(espIp: string) {
     const base = espIp || defaultAP;
-    // Active check sem retry para polling rápido
     return axiosInstance.get(`${base}/active`, { timeout: 5000 });
 }
 
@@ -76,18 +72,15 @@ export async function stopAlarm(espIp: string, id?: number) {
 }
 
 
-// Envia SSID/senha ao ESP (modo AP) — o ESP precisa ter um endpoint /configure que aplique as credenciais
 export async function configureWiFi(espIp: string, ssid: string, pass: string) {
     const base = espIp || defaultAP;
     const body = `ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`;
-    // Configure precisa de timeout maior pois ESP demora para conectar
     return axiosInstance.post(`${base}/configure`, body, { 
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 25000 // 25 segundos para configuração WiFi
+        timeout: 25000
     });
 }
 
-// Reseta a EEPROM do ESP (limpa credenciais WiFi salvas)
 export async function resetEsp(espIp: string) {
     const base = espIp || defaultAP;
     return retryRequest(() =>
