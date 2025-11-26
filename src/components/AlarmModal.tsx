@@ -153,8 +153,11 @@ export default function AlarmModal({
                                         key={n}
                                         style={styles.key}
                                         onPress={() => onAddNumber(n)}
+                                        activeOpacity={0.7}
                                     >
-                                        <Text style={styles.keyText}>{n}</Text>
+                                        <View style={styles.keyInner}>
+                                            <Text style={styles.keyText}>{n}</Text>
+                                        </View>
                                     </TouchableOpacity>
                                 ))}
 
@@ -339,12 +342,27 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 2,
         elevation: 2,
+        padding: 0,
+        overflow: 'hidden',
+    },
+    keyInner: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 0,
+        margin: 0,
     },
     keyText: { 
         fontSize: 32, 
         fontWeight: "700", 
         color: "#333",
         textAlign: 'center',
+        lineHeight: 32,
+        includeFontPadding: false,
+        textAlignVertical: 'center',
+        padding: 0,
+        margin: 0,
     },
     delKey: {
         backgroundColor: "#dc3545",

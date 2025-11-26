@@ -44,7 +44,7 @@ export default function ConfigScreen() {
             await setEspIp(tempIp.trim());
             Alert.alert(
                 '✅ IP Atualizado', 
-                `Novo IP salvo: http://${tempIp.trim()}\n\nCertifique-se de estar na mesma rede WiFi do ESP.`
+                `Novo IP salvo: http://${tempIp.trim()}\n\n⚠️ Importante:\n• Certifique-se de estar na mesma rede WiFi do ESP\n• Use o botão "Testar Conexão" para verificar`
             );
             return;
         }

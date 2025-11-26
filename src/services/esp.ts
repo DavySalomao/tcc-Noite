@@ -60,8 +60,8 @@ export async function getStatus(espIp: string) {
 
 export async function getActive(espIp: string) {
     const base = espIp || defaultAP;
-    // Active check sem retry para polling rápido
-    return axiosInstance.get(`${base}/active`, { timeout: 5000 });
+    // Active check sem retry para polling rápido, com timeout reduzido para 2s
+    return axiosInstance.get(`${base}/active`, { timeout: 2000 });
 }
 
 

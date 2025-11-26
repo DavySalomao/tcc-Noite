@@ -52,8 +52,8 @@ export default function AlarmsScreen({ navigation }: any) {
             setHoraAtual(`${h}:${m}`);
         }, 1000);
         
-        // Verifica status do ESP a cada 2 segundos
-        const statusInterval = setInterval(() => { pollActive(); }, 2000);
+        // Verifica status do ESP a cada 500ms para resposta mais rápida
+        const statusInterval = setInterval(() => { pollActive(); }, 500);
         
         return () => {
             clearInterval(horaInterval);
@@ -183,7 +183,9 @@ export default function AlarmsScreen({ navigation }: any) {
             console.log('[pollActive] Resposta recebida:', res.status);
             
             // Se conseguiu conectar, marca como conectado
-            setStatus('Conectado');
+            if (res.status === 200) {
+                setStatus('Conectado');
+            }
             
             if (res.data?.active) {
                 // Se o ESP reportou o alarme já confirmado, limpa estado local
@@ -222,11 +224,7 @@ export default function AlarmsScreen({ navigation }: any) {
             // Se falhou ao conectar, atualiza status
             console.log('[pollActive] Erro ao conectar:', err.message || err);
             console.log('[pollActive] IP usado:', espIp);
-            if (espIp !== 'http://192.168.4.1') {
-                setStatus('Verifique sua rede WiFi');
-            } else {
-                setStatus('ESP desconectado');
-            }
+            setStatus('ESP desconectado');
         }
     };
 
