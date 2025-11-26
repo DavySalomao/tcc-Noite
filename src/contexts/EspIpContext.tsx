@@ -24,12 +24,10 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
     const loadSavedIp = async () => {
         try {
             const saved = await AsyncStorage.getItem(ESP_IP_KEY);
-            console.log('[EspIpContext] IP carregado do AsyncStorage:', saved);
             if (saved) {
                 setEspIpState(saved);
             }
-        } catch (e) {
-            console.log('[EspIpContext] Erro ao carregar IP:', e);
+        } catch {
         } finally {
             setLoading(false);
         }
@@ -38,21 +36,16 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
     const setEspIp = async (ip: string) => {
         try {
             const formattedIp = ip.startsWith('http') ? ip : `http://${ip}`;
-            console.log('[EspIpContext] Salvando novo IP:', formattedIp);
             await AsyncStorage.setItem(ESP_IP_KEY, formattedIp);
             setEspIpState(formattedIp);
-        } catch (e) {
-            console.log('[EspIpContext] Erro ao salvar IP:', e);
-        }
+        } catch { }
     };
 
     const resetToDefault = async () => {
         try {
             await AsyncStorage.removeItem(ESP_IP_KEY);
             setEspIpState(DEFAULT_IP);
-        } catch (e) {
-            // Silent error handling
-        }
+        } catch (e) { }
     };
 
     return (

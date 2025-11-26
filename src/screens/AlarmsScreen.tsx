@@ -1,16 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView, Modal, TextInput } from 'react-native';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import AlarmModal from '../components/AlarmModal';
-import { listAlarms, setAlarm, deleteAlarm, getStatus, getActive, stopAlarm } from '../services/esp';
+import { setAlarm, deleteAlarm, getActive, stopAlarm } from '../services/esp';
 import { useEspIp } from '../hooks/useEspIp';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type AlarmType = { id: number; hour: string; minute: string; name: string; led: number; enabled: boolean };
 type AlertItem = { id: number; timestamp: number; title: string; message: string };
+
+const STORAGE_KEYS = {
+    ALARMS: 'alarms',
+    ALERTS: 'alerts'
+};
 
 export default function AlarmsScreen({ navigation }: any) {
     const [alarms, setAlarms] = useState<AlarmType[]>([]);
@@ -18,7 +23,7 @@ export default function AlarmsScreen({ navigation }: any) {
     const { espIp } = useEspIp();
 
     const [horaAtual, setHoraAtual] = useState('--:--');
-    const [status, setStatus] = useState('Desconhecido');
+    const [status, setStatus] = useState('Verificando');
     const [tab, setTab] = useState<'alarms' | 'alerts'>('alarms');
 
     const [showModal, setShowModal] = useState(false);
@@ -30,40 +35,49 @@ export default function AlarmsScreen({ navigation }: any) {
 
     const activeFetchedRef = useRef<number | null>(null);
     const [remainingMs, setRemainingMs] = useState<number | null>(null);
+    const failureCountRef = useRef(0);
+    const [activeAlarm, setActiveAlarm] = useState<any>(null);
 
     useEffect(() => {
         (async () => {
             await registerForPushNotificationsAsync();
             if (Device.osName === 'Android') {
                 try {
-                    await Notifications.setNotificationChannelAsync('default', { name: 'default', importance: Notifications.AndroidImportance.HIGH, sound: 'default' });
+                    await Notifications.setNotificationChannelAsync('default', { 
+                        name: 'default', 
+                        importance: Notifications.AndroidImportance.HIGH, 
+                        sound: 'default' 
+                    });
                 } catch { }
             }
         })();
 
-        load();
-        loadAlerts();
+        loadData();
+        failureCountRef.current = 0;
+        setStatus('Verificando');
+        pollActive();
         
-        // Atualiza hora do dispositivo a cada segundo (sem requisição HTTP)
         const horaInterval = setInterval(() => {
             const now = new Date();
-            const h = now.getHours().toString().padStart(2, '0');
-            const m = now.getMinutes().toString().padStart(2, '0');
-            setHoraAtual(`${h}:${m}`);
+            setHoraAtual(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
         }, 1000);
         
+<<<<<<< HEAD
         // Verifica status do ESP a cada 500ms para resposta mais rápida
         const statusInterval = setInterval(() => { pollActive(); }, 500);
+=======
+        const statusInterval = setInterval(pollActive, 500);
+>>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
         
         return () => {
             clearInterval(horaInterval);
             clearInterval(statusInterval);
         };
-    }, []);
+    }, [espIp]);
 
-    async function registerForPushNotificationsAsync() {
+    const registerForPushNotificationsAsync = async () => {
         try {
-            if (!Device || !Device.isDevice) return null;
+            if (!Device?.isDevice) return null;
             const { status: existing } = await Notifications.getPermissionsAsync();
             let finalStatus = existing;
             if (existing !== 'granted') {
@@ -71,138 +85,165 @@ export default function AlarmsScreen({ navigation }: any) {
                 finalStatus = status;
             }
             if (finalStatus !== 'granted') return null;
-            const token = (await Notifications.getExpoPushTokenAsync()).data;
-            return token;
+            return (await Notifications.getExpoPushTokenAsync()).data;
         } catch { return null; }
-    }
+    };
 
-    async function load() {
+    const loadData = useCallback(async () => {
         try {
-            const r = await AsyncStorage.getItem('alarms');
-            if (r) setAlarms(JSON.parse(r));
-        } catch (e) { console.warn('load alarms', e); }
-    }
-
-    async function loadAlerts() {
-        try {
-            const r = await AsyncStorage.getItem('alerts');
-            if (r) setAlerts(JSON.parse(r));
+            const [alarmsData, alertsData] = await Promise.all([
+                AsyncStorage.getItem(STORAGE_KEYS.ALARMS),
+                AsyncStorage.getItem(STORAGE_KEYS.ALERTS)
+            ]);
+            if (alarmsData) setAlarms(JSON.parse(alarmsData));
+            if (alertsData) setAlerts(JSON.parse(alertsData));
         } catch { }
-    }
+    }, []);
 
-    async function saveAlarms(next: AlarmType[]) {
+    const saveAlarms = useCallback(async (next: AlarmType[]) => {
         try {
             setAlarms(next);
-            await AsyncStorage.setItem('alarms', JSON.stringify(next));
+            await AsyncStorage.setItem(STORAGE_KEYS.ALARMS, JSON.stringify(next));
             enviarProximo(next);
-        } catch (e) { console.error('saveAlarms', e); }
-    }
+        } catch { }
+    }, []);
 
-    async function saveAlerts(next: AlertItem[]) {
-        try { setAlerts(next); await AsyncStorage.setItem('alerts', JSON.stringify(next)); } catch { }
-    }
+    const saveAlerts = useCallback(async (next: AlertItem[]) => {
+        try { 
+            setAlerts(next); 
+            await AsyncStorage.setItem(STORAGE_KEYS.ALERTS, JSON.stringify(next)); 
+        } catch { }
+    }, []);
 
-    const pushAlert = async (title: string, message: string) => {
-        const item: AlertItem = { id: Date.now() ^ Math.floor(Math.random() * 1000), timestamp: Date.now(), title, message };
+    const pushAlert = useCallback(async (title: string, message: string) => {
+        const item: AlertItem = { 
+            id: Date.now() ^ Math.floor(Math.random() * 1000), 
+            timestamp: Date.now(), 
+            title, 
+            message 
+        };
         await saveAlerts([item, ...alerts]);
-    };
+    }, [alerts, saveAlerts]);
 
-    const abrirAlarmPicker = () => {
-        setTempHour(''); setTempMinute(''); setTempName(''); setTempLed(0); setActiveField('hour'); setShowModal(true);
-    };
+    const abrirAlarmPicker = useCallback(() => {
+        setTempHour(''); 
+        setTempMinute(''); 
+        setTempName(''); 
+        setTempLed(0); 
+        setActiveField('hour'); 
+        setShowModal(true);
+    }, []);
 
-    const testEspConnection = async () => {
-        try {
-            const res = await getActive(espIp);
-            Alert.alert('Resposta', JSON.stringify(res.data));
-        } catch (err: any) {
-            console.warn('testEspConnection failed', err);
-            Alert.alert('Erro de conexão', err?.message || String(err));
-        }
-    };
-
-    // digitação
-    const adicionarNumero = (num: string) => {
+    const adicionarNumero = useCallback((num: string) => {
         if (activeField === 'hour') {
             const newHour = tempHour + num;
             if (newHour.length <= 2) {
                 setTempHour(newHour);
-                if (newHour.length === 2 || (newHour.length === 1 && parseInt(newHour) > 2)) setActiveField('minute');
+                if (newHour.length === 2 || (newHour.length === 1 && parseInt(newHour) > 2)) {
+                    setActiveField('minute');
+                }
             }
         } else {
             const newMinute = tempMinute + num;
             if (newMinute.length <= 2) setTempMinute(newMinute);
         }
-    };
+    }, [activeField, tempHour, tempMinute]);
 
-    const apagar = () => {
-        if (tempMinute.length > 0) { setTempMinute(s => s.slice(0, -1)); setActiveField('minute'); }
-        else if (tempHour.length > 0) { setTempHour(s => s.slice(0, -1)); setActiveField('hour'); }
-    };
+    const apagar = useCallback(() => {
+        if (tempMinute.length > 0) { 
+            setTempMinute(s => s.slice(0, -1)); 
+            setActiveField('minute'); 
+        } else if (tempHour.length > 0) { 
+            setTempHour(s => s.slice(0, -1)); 
+            setActiveField('hour'); 
+        }
+    }, [tempMinute, tempHour]);
 
-    const salvarNovoAlarme = async () => {
-        const hora = parseInt(tempHour || '0', 10); const minuto = parseInt(tempMinute || '0', 10); const nome = tempName.trim() || 'Alarme';
-        if (isNaN(hora) || hora < 0 || hora > 23 || isNaN(minuto) || minuto < 0 || minuto > 59) { Alert.alert('Horário inválido', 'Informe um horário entre 00:00 e 23:59'); return; }
-        const novo: AlarmType = { id: Date.now(), hour: hora.toString().padStart(2, '0'), minute: minuto.toString().padStart(2, '0'), name: nome, led: tempLed, enabled: true };
-        const novos = [...alarms, novo];
-        await saveAlarms(novos);
+    const salvarNovoAlarme = useCallback(async () => {
+        const hora = parseInt(tempHour || '0', 10);
+        const minuto = parseInt(tempMinute || '0', 10);
+        const nome = tempName.trim() || 'Alarme';
+        
+        if (isNaN(hora) || hora < 0 || hora > 23 || isNaN(minuto) || minuto < 0 || minuto > 59) {
+            Alert.alert('Horário inválido', 'Informe um horário entre 00:00 e 23:59');
+            return;
+        }
+        
+        const novo: AlarmType = { 
+            id: Date.now(), 
+            hour: hora.toString().padStart(2, '0'), 
+            minute: minuto.toString().padStart(2, '0'), 
+            name: nome, 
+            led: tempLed, 
+            enabled: true 
+        };
+        
+        await saveAlarms([...alarms, novo]);
         setShowModal(false);
-    };
+    }, [tempHour, tempMinute, tempName, tempLed, alarms, saveAlarms]);
 
-    const alternarAlarme = async (id: number) => {
+    const alternarAlarme = useCallback(async (id: number) => {
         const novos = alarms.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a);
         await saveAlarms(novos);
-    };
+    }, [alarms, saveAlarms]);
 
-    const excluirAlarme = async (id: number) => {
+    const excluirAlarme = useCallback(async (id: number) => {
         const novos = alarms.filter(a => a.id !== id);
         await saveAlarms(novos);
         await pushAlert('Alarme excluído', `ID ${id} removido`);
-        try { await deleteAlarm(espIp, id); } catch { }
-    };
+        try { 
+            await deleteAlarm(espIp, id); 
+        } catch { }
+    }, [alarms, espIp, saveAlarms, pushAlert]);
 
-    const enviarProximo = async (lista = alarms) => {
+    const enviarProximo = useCallback(async (lista = alarms) => {
         const ativos = lista.filter(a => a.enabled);
         if (ativos.length === 0) return;
-        const agora = new Date(); const agoraMin = agora.getHours() * 60 + agora.getMinutes();
+        
+        const agora = new Date();
+        const agoraMin = agora.getHours() * 60 + agora.getMinutes();
+        
         const proximo = ativos.reduce((menor: AlarmType | null, atual) => {
             const minutosAtual = parseInt(atual.hour) * 60 + parseInt(atual.minute);
             const diffAtual = (minutosAtual - agoraMin + 1440) % 1440;
             const diffMenor = menor ? (parseInt(menor.hour) * 60 + parseInt(menor.minute) - agoraMin + 1440) % 1440 : Infinity;
             return diffAtual < diffMenor ? atual : menor;
         }, null as AlarmType | null);
+        
         if (proximo) {
-            try { await setAlarm(espIp, proximo.hour, proximo.minute, proximo.led, proximo.name); await pushAlert('Alarme agendado', `LED ${proximo.led + 1} às ${proximo.hour}:${proximo.minute}`); } catch { Alert.alert('Erro', 'Falha ao enviar alarme ao ESP'); }
+            try { 
+                await setAlarm(espIp, proximo.hour, proximo.minute, proximo.led, proximo.name);
+                await pushAlert('Alarme agendado', `LED ${proximo.led + 1} às ${proximo.hour}:${proximo.minute}`);
+            } catch { 
+                Alert.alert('Erro', 'Falha ao enviar alarme ao ESP'); 
+            }
         }
-    };
+    }, [alarms, espIp, pushAlert]);
 
-    const pollActive = async () => {
+    const pollActive = useCallback(async () => {
         try {
-            console.log('[pollActive] Tentando conectar em:', espIp);
             const res = await getActive(espIp);
+<<<<<<< HEAD
             console.log('[pollActive] Resposta recebida:', res.status);
             
             // Se conseguiu conectar, marca como conectado
             if (res.status === 200) {
                 setStatus('Conectado');
             }
+=======
+            failureCountRef.current = 0;
+            setStatus('Conectado');
+>>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
             
             if (res.data?.active) {
-                // Se o ESP reportou o alarme já confirmado, limpa estado local
-                if (res.data.acknowledged) {
-                    activeFetchedRef.current = null;
-                    setActiveAlarm(null);
-                    await pushAlert('Alarme já confirmado', `Alarme ${res.data.name} já confirmado no dispositivo.`);
-                } else {
-                    setActiveAlarm(res.data);
-                }
-
                 if (activeFetchedRef.current !== res.data.id) {
                     activeFetchedRef.current = res.data.id;
+                    setActiveAlarm(res.data);
+                    
                     const msg = `Hora do remédio "${res.data.name}", LED ${res.data.led + 1}.`;
                     await pushAlert('Alerta de remédio', msg);
+                    
                     try {
-                        // Notificações locais funcionam no Expo Go
                         await Notifications.scheduleNotificationAsync({ 
                             content: { 
                                 title: '💊 Hora do Remédio!', 
@@ -212,55 +253,50 @@ export default function AlarmsScreen({ navigation }: any) {
                             }, 
                             trigger: null 
                         });
-                    } catch (e) { 
-                        // Silencioso: notificações podem falhar no Expo Go
-                    }
+                    } catch { }
+                } else if (res.data.acknowledged) {
+                    activeFetchedRef.current = null;
+                    setActiveAlarm(null);
+                    await pushAlert('Alarme já confirmado', `Alarme ${res.data.name} já confirmado no dispositivo.`);
+                } else {
+                    setActiveAlarm(res.data);
                 }
             } else {
                 activeFetchedRef.current = null;
                 setActiveAlarm(null);
             }
         } catch (err: any) {
+<<<<<<< HEAD
             // Se falhou ao conectar, atualiza status
             console.log('[pollActive] Erro ao conectar:', err.message || err);
             console.log('[pollActive] IP usado:', espIp);
             setStatus('ESP desconectado');
+=======
+            failureCountRef.current += 1;
+            
+            if (failureCountRef.current >= 10) {
+                setStatus('ESP desconectado');
+            }
+>>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
         }
-    };
+    }, [espIp, pushAlert]);
 
-    
-
-    const confirmarAlarmeAtivo = async (id?: number) => {
+    const confirmarAlarmeAtivo = useCallback(async (id?: number) => {
         try {
             const res = await stopAlarm(espIp, id);
-            // expect JSON { ok: true, acknowledged: true }
             if (res?.data && (res.data.ok || res.status === 200)) {
-                const ack = res.data.acknowledged ?? true;
-                if (ack) {
-                    setActiveAlarm(null);
-                    activeFetchedRef.current = null;
-                    await pushAlert('Alarme confirmado', `Confirmado`);
-                    Alert.alert('Confirmado', 'Alarme interrompido.');
-                } else {
-                    // fallback: if ESP didn't explicitly ack, still clear
-                    setActiveAlarm(null);
-                    activeFetchedRef.current = null;
-                    await pushAlert('Alarme confirmado', `Confirmado`);
-                    Alert.alert('Confirmado', 'Alarme interrompido.');
-                }
+                setActiveAlarm(null);
+                activeFetchedRef.current = null;
+                await pushAlert('Alarme confirmado', 'Confirmado');
+                Alert.alert('Confirmado', 'Alarme interrompido.');
             } else {
                 throw new Error('Resposta inválida do ESP');
             }
-        } catch (err) {
-            console.warn('confirmarAlarmeAtivo failed', err);
+        } catch {
             Alert.alert('Erro', 'Falha ao confirmar alarme.');
         }
-    };
+    }, [espIp, pushAlert]);
 
-    // estado para banner ativo
-    const [activeAlarm, setActiveAlarm] = useState<any>(null);
-
-    // atualizar contador local de tempo restante para mostrar no modal
     useEffect(() => {
         if (activeAlarm?.remainingMs != null) {
             setRemainingMs(Number(activeAlarm.remainingMs));
@@ -273,207 +309,224 @@ export default function AlarmsScreen({ navigation }: any) {
         }
     }, [activeAlarm]);
 
-    const formatMs = (ms: number | null) => {
+    const formatMs = useCallback((ms: number | null) => {
         if (ms == null) return '--:--';
         const total = Math.max(0, Math.floor(ms / 1000));
-        const minutes = Math.floor(total / 60).toString().padStart(2, '0');
-        const seconds = (total % 60).toString().padStart(2, '0');
-        return `${minutes}:${seconds}`;
-    };
+        return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`;
+    }, []);
 
-    return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#2C674D' }}>
-            <View style={{ flex: 1, backgroundColor: '#f8f9fa' }}>
-            {/* Modal full-screen que aparece enquanto o alarme está ativo. Botão Confirmar interrompe o alarme no ESP */}
-            <Modal visible={!!activeAlarm} transparent animationType="fade">
-                <View style={styles.activeModalOverlay}>
-                    <View style={styles.activeModalBox}>
-                        <MaterialCommunityIcons name="pill" size={64} color="#D9534F" style={{ marginBottom: 16 }} />
-                        <Text style={styles.activeModalTitle}>⏰ Hora do Remédio!</Text>
-                        <Text style={styles.activeModalText}>{activeAlarm?.name}</Text>
-                        <View style={styles.ledBadge}>
-                            <MaterialCommunityIcons name="led-on" size={20} color="#fff" />
-                            <Text style={styles.ledBadgeText}>LED {activeAlarm?.led + 1}</Text>
-                        </View>
-
-                        <Text style={styles.activeModalTimer}>⏱ {formatMs(remainingMs)}</Text>
-
-                        <TouchableOpacity style={styles.activeModalConfirm} onPress={() => confirmarAlarmeAtivo(activeAlarm?.id)}>
-                            <Ionicons name="checkmark-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
-                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Confirmar Medicação</Text>
-                        </TouchableOpacity>
+    const renderAlarmItem = useCallback(({ item: alarm }: { item: AlarmType }) => (
+        <View style={styles.alarmCard}>
+            <View style={styles.alarmHeader}>
+                <View style={styles.alarmTimeContainer}>
+                    <Text style={styles.alarmTime}>{alarm.hour}:{alarm.minute}</Text>
+                    <View style={styles.alarmInfo}>
+                        <MaterialCommunityIcons name="pill" size={16} color="#666" />
+                        <Text style={styles.alarmName}>{alarm.name}</Text>
                     </View>
                 </View>
-            </Modal>
-            <View style={styles.topbar}>
-                <View style={styles.tabGroup}>
-                    <TouchableOpacity onPress={() => setTab('alarms')} style={[styles.tabBtn, tab === 'alarms' && styles.tabActive]}>
-                        <Ionicons name="alarm" size={18} color="#fff" style={{ marginRight: 4 }} />
-                        <Text style={[styles.tabText, tab === 'alarms' && styles.tabTextActive]}>Alarmes</Text>
-                    </TouchableOpacity>
 
-                    <TouchableOpacity onPress={() => setTab('alerts')} style={[styles.tabBtn, tab === 'alerts' && styles.tabActive]}>
-                        <Ionicons name="notifications" size={18} color="#fff" style={{ marginRight: 4 }} />
-                        <Text style={[styles.tabText, tab === 'alerts' && styles.tabTextActive]}>Alertas ({alerts.length})</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity onPress={() => navigation.navigate('Config')} style={styles.gearBtn}>
-                    <Ionicons name="settings" size={24} color="#fff" />
-                </TouchableOpacity>
+                <Switch 
+                    value={alarm.enabled} 
+                    onValueChange={() => alternarAlarme(alarm.id)} 
+                    thumbColor={alarm.enabled ? '#fff' : '#f4f3f4'}
+                    trackColor={{ false: '#d1d5db', true: '#41A579' }} 
+                    ios_backgroundColor="#d1d5db"
+                />
             </View>
 
-            {activeAlarm && (
-                <View style={styles.activeBanner}>
-                    <MaterialCommunityIcons name="bell-ring" size={24} color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#fff', fontWeight: '700', flex: 1 }}>ALERTA: {activeAlarm.name}</Text>
-                    <TouchableOpacity style={styles.confirmBtn} onPress={() => confirmarAlarmeAtivo(activeAlarm.id)}>
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>Confirmar</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
+            <View style={styles.ledIndicator}>
+                <MaterialCommunityIcons name="led-on" size={16} color="#41A579" />
+                <Text style={styles.ledText}>LED {alarm.led + 1}</Text>
+            </View>
 
-            {tab === 'alarms' ? (
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
-                    <View style={styles.headerCard}>
-                        <View style={{ alignItems: 'center' }}>
-                            <Image source={require('../../assets/images/logoTeste.png')} style={{ width: 240, height: 240, resizeMode: 'contain' }} />
-                        </View>
+            <TouchableOpacity style={styles.deleteBtn} onPress={() => excluirAlarme(alarm.id)}>
+                <Ionicons name="trash" size={18} color="#fff" />
+                <Text style={styles.deleteBtnText}>Excluir</Text>
+            </TouchableOpacity>
+        </View>
+    ), [alternarAlarme, excluirAlarme]);
 
-                        <Text style={styles.subtitle}>Seu assistente de medicação</Text>
-                        
-                        <View style={styles.statusCard}>
-                            <View style={styles.statusRow}>
-                                <Ionicons name="time" size={20} color="#2C674D" />
-                                <Text style={styles.statusLabel}>Hora atual:</Text>
-                                <Text style={styles.statusValue}>{horaAtual}</Text>
-                            </View>
-                            <View style={styles.statusRow}>
-                                <Ionicons name={status === 'Conectado' ? 'wifi' : 'wifi-outline'} size={20} color={status === 'Conectado' ? '#28a745' : '#dc3545'} />
-                                <Text style={styles.statusLabel}>Status:</Text>
-                                <Text style={[styles.statusValue, { color: status === 'Conectado' ? '#28a745' : '#dc3545' }]}>{status}</Text>
-                            </View>
-                            
-                            {status === 'Verifique sua rede WiFi' && espIp !== 'http://192.168.4.1' && (
-                                <View style={styles.wifiWarning}>
-                                    <Ionicons name="warning" size={16} color="#f59e0b" />
-                                    <Text style={styles.wifiWarningText}>
-                                        Conecte seu celular à mesma rede WiFi do ESP para usar o app
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
+    const renderAlertItem = useCallback(({ item }: { item: AlertItem }) => (
+        <View style={styles.alertCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Ionicons name="notifications" size={20} color="#2C674D" style={{ marginRight: 8 }} />
+                <Text style={styles.alertTitle}>{item.title}</Text>
+            </View>
+            <Text style={styles.alertTime}>{new Date(item.timestamp).toLocaleString('pt-BR')}</Text>
+            <Text style={styles.alertMessage}>{item.message}</Text>
+        </View>
+    ), []);
 
-                    <View style={styles.sectionHeader}>
-                        <MaterialCommunityIcons name="pill" size={24} color="#2C674D" />
-                        <Text style={styles.sectionTitle}>Meus Alarmes</Text>
-                    </View>
-
-                    {alarms.length === 0 && (
-                        <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="alarm-off" size={64} color="#ccc" />
-                            <Text style={styles.emptyText}>Nenhum alarme configurado</Text>
-                            <Text style={styles.emptySubtext}>Adicione um alarme para começar</Text>
-                        </View>
-                    )}
-
-                    {alarms.map((alarm) => (
-                        <View key={alarm.id} style={styles.alarmCard}>
-                            <View style={styles.alarmHeader}>
-                                <View style={styles.alarmTimeContainer}>
-                                    <Text style={styles.alarmTime}>{alarm.hour}:{alarm.minute}</Text>
-                                    <View style={styles.alarmInfo}>
-                                        <MaterialCommunityIcons name="pill" size={16} color="#666" />
-                                        <Text style={styles.alarmName}>{alarm.name}</Text>
-                                    </View>
-                                </View>
-
-                                <Switch 
-                                    value={alarm.enabled} 
-                                    onValueChange={() => alternarAlarme(alarm.id)} 
-                                    thumbColor={alarm.enabled ? '#fff' : '#f4f3f4'}
-                                    trackColor={{ false: '#d1d5db', true: '#41A579' }} 
-                                    ios_backgroundColor="#d1d5db"
-                                />
+    return (
+        <SafeAreaView style={styles.safeArea}>
+            <View style={styles.container}>
+                <Modal visible={!!activeAlarm} transparent animationType="fade">
+                    <View style={styles.activeModalOverlay}>
+                        <View style={styles.activeModalBox}>
+                            <MaterialCommunityIcons name="pill" size={64} color="#D9534F" style={{ marginBottom: 16 }} />
+                            <Text style={styles.activeModalTitle}>⏰ Hora do Remédio!</Text>
+                            <Text style={styles.activeModalText}>{activeAlarm?.name}</Text>
+                            <View style={styles.ledBadge}>
+                                <MaterialCommunityIcons name="led-on" size={20} color="#fff" />
+                                <Text style={styles.ledBadgeText}>LED {activeAlarm?.led + 1}</Text>
                             </View>
 
-                            <View style={styles.ledIndicator}>
-                                <MaterialCommunityIcons name="led-on" size={16} color="#41A579" />
-                                <Text style={styles.ledText}>LED {alarm.led + 1}</Text>
-                            </View>
+                            <Text style={styles.activeModalTimer}>⏱ {formatMs(remainingMs)}</Text>
 
-                            <TouchableOpacity style={styles.deleteBtn} onPress={() => excluirAlarme(alarm.id)}>
-                                <Ionicons name="trash" size={18} color="#fff" />
-                                <Text style={styles.deleteBtnText}>Excluir</Text>
+                            <TouchableOpacity style={styles.activeModalConfirm} onPress={() => confirmarAlarmeAtivo(activeAlarm?.id)}>
+                                <Ionicons name="checkmark-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
+                                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Confirmar Medicação</Text>
                             </TouchableOpacity>
                         </View>
-                    ))}
+                    </View>
+                </Modal>
 
-                    <TouchableOpacity style={styles.addBtn} onPress={abrirAlarmPicker}>
-                        <Ionicons name="add-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
-                        <Text style={styles.addBtnText}>Adicionar Alarme</Text>
-                    </TouchableOpacity>
+                <View style={styles.topbar}>
+                    <View style={styles.tabGroup}>
+                        <TouchableOpacity onPress={() => setTab('alarms')} style={[styles.tabBtn, tab === 'alarms' && styles.tabActive]}>
+                            <Ionicons name="alarm" size={18} color="#fff" style={{ marginRight: 4 }} />
+                            <Text style={[styles.tabText, tab === 'alarms' && styles.tabTextActive]}>Alarmes</Text>
+                        </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.clearBtn} onPress={async () => { 
-                        Alert.alert('Confirmar', 'Deseja limpar todos os alarmes?', [
-                            { text: 'Cancelar', style: 'cancel' },
-                            { text: 'Limpar', onPress: async () => await saveAlarms([]), style: 'destructive' }
-                        ]);
-                    }}>
-                        <Ionicons name="trash-bin" size={20} color="#fff" style={{ marginRight: 8 }} />
-                        <Text style={styles.clearBtnText}>Limpar Todos os Alarmes</Text>
-                    </TouchableOpacity>
-
-                    <View style={{ height: 40 }} />
-
-                    <AlarmModal visible={showModal} tempHour={tempHour} tempMinute={tempMinute} tempName={tempName} tempLed={tempLed} activeField={activeField} onChangeName={setTempName} onSelectField={setActiveField} onAddNumber={adicionarNumero} onDelete={apagar} onSelectLed={setTempLed} onClose={() => setShowModal(false)} onConfirm={salvarNovoAlarme} />
-                </ScrollView>
-            ) : (
-                <View style={{ flex: 1, backgroundColor: '#f8f9fa' }}>
-                    <View style={styles.alertsHeader}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Ionicons name="time-outline" size={24} color="#333" style={{ marginRight: 8 }} />
-                            <Text style={styles.alertsHeaderText}>Histórico de Alertas</Text>
-                        </View>
-                        <TouchableOpacity onPress={async () => { 
-                            Alert.alert('Confirmar', 'Deseja limpar o histórico?', [
-                                { text: 'Cancelar', style: 'cancel' },
-                                { text: 'Limpar', onPress: async () => await saveAlerts([]), style: 'destructive' }
-                            ]);
-                        }} style={styles.clearAlertsBtn}>
-                            <Ionicons name="trash" size={18} color="#fff" />
-                            <Text style={styles.clearAlertsBtnText}>Limpar</Text>
+                        <TouchableOpacity onPress={() => setTab('alerts')} style={[styles.tabBtn, tab === 'alerts' && styles.tabActive]}>
+                            <Ionicons name="notifications" size={18} color="#fff" style={{ marginRight: 4 }} />
+                            <Text style={[styles.tabText, tab === 'alerts' && styles.tabTextActive]}>Alertas ({alerts.length})</Text>
                         </TouchableOpacity>
                     </View>
 
-                    <FlatList data={alerts} keyExtractor={(it) => String(it.id)} contentContainerStyle={{ padding: 16 }} ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
-                            <Text style={styles.emptyText}>Nenhum alerta</Text>
-                            <Text style={styles.emptySubtext}>Os alertas aparecerão aqui</Text>
-                        </View>
-                    } renderItem={({ item }) => (
-                        <View style={styles.alertCard}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                                <Ionicons name="notifications" size={20} color="#2C674D" style={{ marginRight: 8 }} />
-                                <Text style={styles.alertTitle}>{item.title}</Text>
-                            </View>
-                            <Text style={styles.alertTime}>{new Date(item.timestamp).toLocaleString('pt-BR')}</Text>
-                            <Text style={styles.alertMessage}>{item.message}</Text>
-                        </View>
-                    )} />
+                    <TouchableOpacity onPress={() => navigation.navigate('Config')} style={styles.gearBtn}>
+                        <Ionicons name="settings" size={24} color="#fff" />
+                    </TouchableOpacity>
                 </View>
-            )}
+
+                {activeAlarm && (
+                    <View style={styles.activeBanner}>
+                        <MaterialCommunityIcons name="bell-ring" size={24} color="#fff" style={{ marginRight: 8 }} />
+                        <Text style={{ color: '#fff', fontWeight: '700', flex: 1 }}>ALERTA: {activeAlarm.name}</Text>
+                        <TouchableOpacity style={styles.confirmBtn} onPress={() => confirmarAlarmeAtivo(activeAlarm.id)}>
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>Confirmar</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {tab === 'alarms' ? (
+                    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
+                        <View style={styles.headerCard}>
+                            <Image source={require('../../assets/images/logoTeste.png')} style={styles.logo} />
+                            <Text style={styles.subtitle}>Seu assistente de medicação</Text>
+                            
+                            <View style={styles.statusCard}>
+                                <View style={styles.statusRow}>
+                                    <Ionicons name="time" size={20} color="#2C674D" />
+                                    <Text style={styles.statusLabel}>Hora atual:</Text>
+                                    <Text style={styles.statusValue}>{horaAtual}</Text>
+                                </View>
+                                <View style={styles.statusRow}>
+                                    <Ionicons name={status === 'Conectado' ? 'wifi' : 'wifi-outline'} size={20} color={status === 'Conectado' ? '#28a745' : '#dc3545'} />
+                                    <Text style={styles.statusLabel}>Status:</Text>
+                                    <Text style={[styles.statusValue, { color: status === 'Conectado' ? '#28a745' : '#dc3545' }]}>{status}</Text>
+                                </View>
+                            </View>
+                        </View>
+
+                        <View style={styles.sectionHeader}>
+                            <MaterialCommunityIcons name="pill" size={24} color="#2C674D" />
+                            <Text style={styles.sectionTitle}>Meus Alarmes</Text>
+                        </View>
+
+                        {alarms.length === 0 && (
+                            <View style={styles.emptyState}>
+                                <MaterialCommunityIcons name="alarm-off" size={64} color="#ccc" />
+                                <Text style={styles.emptyText}>Nenhum alarme configurado</Text>
+                                <Text style={styles.emptySubtext}>Adicione um alarme para começar</Text>
+                            </View>
+                        )}
+
+                        <FlatList
+                            data={alarms}
+                            renderItem={renderAlarmItem}
+                            keyExtractor={item => item.id.toString()}
+                            scrollEnabled={false}
+                        />
+
+                        <TouchableOpacity style={styles.addBtn} onPress={abrirAlarmPicker}>
+                            <Ionicons name="add-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
+                            <Text style={styles.addBtnText}>Adicionar Alarme</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={styles.clearBtn} onPress={() => { 
+                            Alert.alert('Confirmar', 'Deseja limpar todos os alarmes?', [
+                                { text: 'Cancelar', style: 'cancel' },
+                                { text: 'Limpar', onPress: () => saveAlarms([]), style: 'destructive' }
+                            ]);
+                        }}>
+                            <Ionicons name="trash-bin" size={20} color="#fff" style={{ marginRight: 8 }} />
+                            <Text style={styles.clearBtnText}>Limpar Todos os Alarmes</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ height: 40 }} />
+                    </ScrollView>
+                ) : (
+                    <View style={{ flex: 1, backgroundColor: '#f8f9fa' }}>
+                        <View style={styles.alertsHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Ionicons name="time-outline" size={24} color="#333" style={{ marginRight: 8 }} />
+                                <Text style={styles.alertsHeaderText}>Histórico de Alertas</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => { 
+                                Alert.alert('Confirmar', 'Deseja limpar o histórico?', [
+                                    { text: 'Cancelar', style: 'cancel' },
+                                    { text: 'Limpar', onPress: () => saveAlerts([]), style: 'destructive' }
+                                ]);
+                            }} style={styles.clearAlertsBtn}>
+                                <Ionicons name="trash" size={18} color="#fff" />
+                                <Text style={styles.clearAlertsBtnText}>Limpar</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <FlatList 
+                            data={alerts} 
+                            keyExtractor={item => item.id.toString()} 
+                            contentContainerStyle={{ padding: 16 }} 
+                            ListEmptyComponent={
+                                <View style={styles.emptyState}>
+                                    <Ionicons name="notifications-off-outline" size={64} color="#ccc" />
+                                    <Text style={styles.emptyText}>Nenhum alerta</Text>
+                                    <Text style={styles.emptySubtext}>Os alertas aparecerão aqui</Text>
+                                </View>
+                            } 
+                            renderItem={renderAlertItem}
+                        />
+                    </View>
+                )}
+
+                <AlarmModal 
+                    visible={showModal} 
+                    tempHour={tempHour} 
+                    tempMinute={tempMinute} 
+                    tempName={tempName} 
+                    tempLed={tempLed} 
+                    activeField={activeField} 
+                    onChangeName={setTempName} 
+                    onSelectField={setActiveField} 
+                    onAddNumber={adicionarNumero} 
+                    onDelete={apagar} 
+                    onSelectLed={setTempLed} 
+                    onClose={() => setShowModal(false)} 
+                    onConfirm={salvarNovoAlarme} 
+                />
             </View>
         </SafeAreaView>
     );
 }
 
-
 const styles = StyleSheet.create({
-    container: { flexGrow: 1, padding: 16, backgroundColor: '#f8f9fa' },
-
+    safeArea: { flex: 1, backgroundColor: '#2C674D' },
+    container: { flex: 1, backgroundColor: '#f8f9fa' },
+    scrollContent: { flexGrow: 1, padding: 16, backgroundColor: '#f8f9fa' },
+    logo: { width: 240, height: 240, resizeMode: 'contain', alignSelf: 'center' },
+    
     topbar: { 
         flexDirection: 'row', 
         backgroundColor: '#2C674D', 
@@ -535,14 +588,6 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
 
-    title: { 
-        fontSize: 32, 
-        marginTop: 12,
-        marginBottom: 4,
-        fontWeight: '800', 
-        color: '#2C674D', 
-        textAlign: 'center',
-    },
     subtitle: {
         fontSize: 16,
         color: '#666',
@@ -572,23 +617,6 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         flex: 1,
         textAlign: 'right',
-    },
-    wifiWarning: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fef3c7',
-        padding: 12,
-        borderRadius: 8,
-        marginTop: 12,
-        gap: 8,
-        borderLeftWidth: 3,
-        borderLeftColor: '#f59e0b',
-    },
-    wifiWarningText: {
-        flex: 1,
-        fontSize: 12,
-        color: '#92400e',
-        lineHeight: 16,
     },
 
     sectionHeader: {
@@ -794,7 +822,6 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     
-    /* Styles for active alarm fullscreen modal */
     activeModalOverlay: { 
         flex: 1, 
         backgroundColor: 'rgba(0,0,0,0.8)', 

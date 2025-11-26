@@ -10,9 +10,9 @@ export default function ConfigScreen() {
     const [pass, setPass] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const { espIp, setEspIp, resetToDefault } = useEspIp();
-    const [tempIp, setTempIp] = useState(''); // IP editável local
+    const [tempIp, setTempIp] = useState('');
     const [wifiMode, setWifiMode] = useState<'ap_mode' | 'connected' | 'unknown'>('unknown');
-    const [loading, setLoading] = useState(false); // Começa sem loading
+    const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         checkEspStatus();
@@ -20,7 +20,6 @@ export default function ConfigScreen() {
         return () => clearInterval(interval);
     }, [espIp]);
 
-    // Sincroniza IP local com o global
     useEffect(() => {
         setTempIp(espIp.replace('http://', ''));
     }, [espIp]);
@@ -39,7 +38,6 @@ export default function ConfigScreen() {
     };
 
     const enviar = async () => {
-        // Atualiza o IP se foi modificado
         if (tempIp.trim() && tempIp !== espIp.replace('http://', '')) {
             await setEspIp(tempIp.trim());
             Alert.alert(
@@ -49,7 +47,6 @@ export default function ConfigScreen() {
             return;
         }
 
-        // Se não modificou IP, continua com configuração WiFi
         if (!ssid.trim()) {
             Alert.alert('Atenção', 'Por favor, informe o SSID da rede Wi-Fi ou atualize o IP');
             return;
@@ -58,14 +55,11 @@ export default function ConfigScreen() {
         try {
             const response = await configureWiFi(espIp, ssid, pass);
             
-            // Se o ESP retornou um novo IP, salva automaticamente
             if (response.data?.success && response.data?.ip) {
-                const newIp = response.data.ip; // ESP já retorna apenas o IP (ex: 192.168.0.2)
+                const newIp = response.data.ip;
                 
-                // Salva o novo IP imediatamente
-                await setEspIp(newIp); // Hook adiciona http:// automaticamente
+                await setEspIp(newIp);
                 
-                // Aguarda 3 segundos para o ESP reiniciar
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 
                 Alert.alert(
