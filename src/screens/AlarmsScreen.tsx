@@ -40,15 +40,19 @@ export default function AlarmsScreen({ navigation }: any) {
 
     useEffect(() => {
         (async () => {
-            await registerForPushNotificationsAsync();
+            // Configura canal de notificação apenas para Android
             if (Device.osName === 'Android') {
                 try {
                     await Notifications.setNotificationChannelAsync('default', { 
-                        name: 'default', 
+                        name: 'Alarmes de Medicação', 
                         importance: Notifications.AndroidImportance.HIGH, 
-                        sound: 'default' 
+                        sound: 'default',
+                        vibrationPattern: [0, 250, 250, 250],
+                        enableVibrate: true,
                     });
-                } catch { }
+                } catch (e) {
+                    console.log('Erro ao configurar canal de notificação:', e);
+                }
             }
         })();
 
@@ -62,32 +66,14 @@ export default function AlarmsScreen({ navigation }: any) {
             setHoraAtual(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
         }, 1000);
         
-<<<<<<< HEAD
         // Verifica status do ESP a cada 500ms para resposta mais rápida
         const statusInterval = setInterval(() => { pollActive(); }, 500);
-=======
-        const statusInterval = setInterval(pollActive, 500);
->>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
         
         return () => {
             clearInterval(horaInterval);
             clearInterval(statusInterval);
         };
     }, [espIp]);
-
-    const registerForPushNotificationsAsync = async () => {
-        try {
-            if (!Device?.isDevice) return null;
-            const { status: existing } = await Notifications.getPermissionsAsync();
-            let finalStatus = existing;
-            if (existing !== 'granted') {
-                const { status } = await Notifications.requestPermissionsAsync();
-                finalStatus = status;
-            }
-            if (finalStatus !== 'granted') return null;
-            return (await Notifications.getExpoPushTokenAsync()).data;
-        } catch { return null; }
-    };
 
     const loadData = useCallback(async () => {
         try {
@@ -104,7 +90,7 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             setAlarms(next);
             await AsyncStorage.setItem(STORAGE_KEYS.ALARMS, JSON.stringify(next));
-            enviarProximo(next);
+            // Removido enviarProximo - agora cada alarme é enviado individualmente quando criado
         } catch { }
     }, []);
 
@@ -178,9 +164,17 @@ export default function AlarmsScreen({ navigation }: any) {
             enabled: true 
         };
         
+        try {
+            await setAlarm(espIp, novo.hour, novo.minute, novo.led, novo.name);
+            await pushAlert('Alarme criado', `${novo.name} às ${novo.hour}:${novo.minute} - LED ${novo.led + 1}`);
+        } catch (error: any) {
+            Alert.alert('Erro', `Falha ao enviar alarme ao ESP: ${error.message}`);
+            return;
+        }
+        
         await saveAlarms([...alarms, novo]);
         setShowModal(false);
-    }, [tempHour, tempMinute, tempName, tempLed, alarms, saveAlarms]);
+    }, [tempHour, tempMinute, tempName, tempLed, alarms, saveAlarms, espIp, pushAlert]);
 
     const alternarAlarme = useCallback(async (id: number) => {
         const novos = alarms.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a);
@@ -223,17 +217,11 @@ export default function AlarmsScreen({ navigation }: any) {
     const pollActive = useCallback(async () => {
         try {
             const res = await getActive(espIp);
-<<<<<<< HEAD
-            console.log('[pollActive] Resposta recebida:', res.status);
             
             // Se conseguiu conectar, marca como conectado
             if (res.status === 200) {
                 setStatus('Conectado');
             }
-=======
-            failureCountRef.current = 0;
-            setStatus('Conectado');
->>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
             
             if (res.data?.active) {
                 if (activeFetchedRef.current !== res.data.id) {
@@ -266,18 +254,8 @@ export default function AlarmsScreen({ navigation }: any) {
                 setActiveAlarm(null);
             }
         } catch (err: any) {
-<<<<<<< HEAD
             // Se falhou ao conectar, atualiza status
-            console.log('[pollActive] Erro ao conectar:', err.message || err);
-            console.log('[pollActive] IP usado:', espIp);
             setStatus('ESP desconectado');
-=======
-            failureCountRef.current += 1;
-            
-            if (failureCountRef.current >= 10) {
-                setStatus('ESP desconectado');
-            }
->>>>>>> f5f7f59a2c078a426755c5f99715dd967dc29cb9
         }
     }, [espIp, pushAlert]);
 

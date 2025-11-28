@@ -1,30 +1,26 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <EEPROM.h>
+#include <ESP8266mDNS.h>
+#include <WiFiManager.h>
 #include <time.h>
 
 ESP8266WebServer server(80);
+WiFiManager wifiManager;
 
-// LEDs externos conectados aos pinos D0-D7
-// NOTA: O pino GPIO2 (índice 4 no array) é compartilhado com o LED embutido da placa
-// O LED embutido é controlado com lógica invertida (HIGH=apagado, LOW=aceso)
-const uint8_t ledPins[8] = { 16, 5, 4, 0, 2, 14, 12, 13 };
+// Mapeamento dos LEDs aos pinos do ESP8266
+// LED 1 -> D7 (GPIO13)
+// LED 2 -> D4 (GPIO2) - LED embutido, lógica invertida
+// LED 3 -> D2 (GPIO4)
+// LED 4 -> D1 (GPIO5)
+// LED 5 -> D5 (GPIO14)
+// LED 6 -> D6 (GPIO12)
+// LED 7 -> D3 (GPIO0)
+// LED 8 -> D0 (GPIO16)
+const uint8_t ledPins[8] = { 13, 2, 4, 5, 14, 12, 0, 16 };
 const uint8_t buzzerPin = 15;
-const uint8_t ledBuiltIn = 2; // LED embutido da placa (GPIO2 / D4)
 
-// Configuração de rede padrão (AP Mode)
-const char* ap_ssid = "Medtime";
-const char* ap_password = "12345678";
-IPAddress ap_ip(192, 168, 4, 1);
-IPAddress ap_gateway(192, 168, 4, 1);
-IPAddress ap_subnet(255, 255, 255, 0);
-
-// Estrutura para salvar credenciais na EEPROM
-struct WiFiCredentials {
-  char ssid[32];
-  char password[64];
-  bool configured;
-};
+// Hostname mDNS
+const char* mdnsName = "medtime";
 
 struct Alarm {
   uint8_t id;
@@ -52,171 +48,181 @@ unsigned long seqStartMs = 0;
 uint8_t seqStage = 0;
 unsigned long lastSequenceRepeat = 0;
 
-bool isAPMode = true;
-
 void setupWiFi() {
-  Serial.println("=== Iniciando WiFi ===");
+  Serial.println("========================================");
+  Serial.println("    MEDTIME - Configuração WiFi");
+  Serial.println("========================================");
   
-  EEPROM.begin(512);
+  // Configura o WiFiManager
+  wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
+    Serial.println("📡 Modo de configuração ativado!");
+    Serial.println("========================================");
+    Serial.println("Conecte-se à rede WiFi: MedTime");
+    Serial.println("Acesse: http://192.168.4.1");
+    Serial.println("Configure sua rede WiFi");
+    Serial.println("========================================");
+    
+    // Toca buzzer para indicar modo de configuração
+    tone(buzzerPin, 1000);
+    delay(200);
+    noTone(buzzerPin);
+    delay(100);
+    tone(buzzerPin, 1500);
+    delay(200);
+    noTone(buzzerPin);
+  });
   
-  // Tenta ler credenciais salvas
-  WiFiCredentials creds;
-  EEPROM.get(0, creds);
+  wifiManager.setSaveConfigCallback([]() {
+    Serial.println("✓ Configuração WiFi salva!");
+    Serial.println("Conectando à rede...");
+  });
   
-  // Se há credenciais salvas, tenta conectar
-  if (creds.configured && strlen(creds.ssid) > 0) {
-    Serial.println("Credenciais encontradas, tentando conectar...");
-    Serial.print("SSID: ");
-    Serial.println(creds.ssid);
-    
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(creds.ssid, creds.password);
-    
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
-    Serial.println();
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("Conectado à rede WiFi!");
-      Serial.print("IP: ");
-      Serial.println(WiFi.localIP());
-      isAPMode = false;
-      return;
-    } else {
-      Serial.println("Falha ao conectar. Iniciando modo AP...");
-    }
-  } else {
-    Serial.println("Nenhuma credencial salva. Iniciando modo AP...");
+  // Timeout de 180 segundos para o portal de configuração
+  wifiManager.setConfigPortalTimeout(180);
+  
+  // Nome do AP para configuração
+  if (!wifiManager.autoConnect("MedTime", "12345678")) {
+    Serial.println("✗ Falha ao conectar. Reiniciando...");
+    delay(3000);
+    ESP.restart();
   }
   
-  // Inicia em modo AP com IP fixo
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
-  WiFi.softAP(ap_ssid, ap_password);
-  
-  Serial.println("Modo AP ativo");
+  // Conectado com sucesso
+  Serial.println("========================================");
+  Serial.println("✅ CONECTADO À REDE WIFI!");
+  Serial.println("========================================");
   Serial.print("SSID: ");
-  Serial.println(ap_ssid);
+  Serial.println(WiFi.SSID());
   Serial.print("IP: ");
-  Serial.println(WiFi.softAPIP());
-  Serial.println("Aguardando configuração via /configure");
+  Serial.println(WiFi.localIP());
+  Serial.print("RSSI: ");
+  Serial.print(WiFi.RSSI());
+  Serial.println(" dBm");
+  Serial.println("========================================");
   
-  isAPMode = true;
+  // Inicializa mDNS
+  if (MDNS.begin(mdnsName)) {
+    Serial.println("✓ mDNS iniciado com sucesso!");
+    Serial.print("Acesse: http://");
+    Serial.print(mdnsName);
+    Serial.println(".local");
+    
+    // Adiciona serviço HTTP
+    MDNS.addService("http", "tcp", 80);
+    
+    Serial.println("========================================");
+  } else {
+    Serial.println("✗ Erro ao iniciar mDNS");
+  }
+  
+  // Toca confirmação de conexão bem-sucedida
+  playConfirmation();
 }
 
-// Função para reconfigurar WiFi via endpoint
-void handleConfigure() {
-  if (!server.hasArg("ssid")) {
-    server.send(400, "application/json", "{\"success\":false,\"error\":\"missing_ssid\"}");
-    return;
-  }
-
-  String ssid = server.arg("ssid");
-  String pass = server.hasArg("pass") ? server.arg("pass") : "";
-
-  Serial.println("=== Recebendo configuração WiFi ===");
-  Serial.print("SSID: ");
-  Serial.println(ssid);
-
-  // Salva credenciais na EEPROM
-  WiFiCredentials creds;
-  memset(&creds, 0, sizeof(creds));
-  strncpy(creds.ssid, ssid.c_str(), sizeof(creds.ssid) - 1);
-  strncpy(creds.password, pass.c_str(), sizeof(creds.password) - 1);
-  creds.configured = true;
+// Função para resetar configurações WiFi (via endpoint)
+void handleResetWiFi() {
+  addCORSHeaders();
   
-  EEPROM.put(0, creds);
-  EEPROM.commit();
-  Serial.println("Credenciais salvas na EEPROM");
-
-  // Muda para modo Station e tenta conectar
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid.c_str(), pass.c_str());
+  Serial.println("=== Resetando configurações WiFi ===");
   
-  // Aguarda até 20 segundos para conectar
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
+  wifiManager.resetSettings();
   
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("✓ Conectado com sucesso!");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-    
-    isAPMode = false;
-    
-    // Retorna sucesso com o novo IP
-    char response[100];
-    snprintf(response, sizeof(response), 
-             "{\"success\":true,\"ip\":\"%s\"}", 
-             WiFi.localIP().toString().c_str());
-    server.send(200, "application/json", response);
-    
-    playConfirmation();
-    
-    // Reinicia após 2 segundos para consolidar conexão
-    delay(2000);
-    ESP.restart();
-  } else {
-    Serial.println("✗ Falha ao conectar");
-    
-    // Limpa credenciais inválidas
-    WiFiCredentials emptyCreeds;
-    memset(&emptyCreeds, 0, sizeof(emptyCreeds));
-    emptyCreeds.configured = false;
-    EEPROM.put(0, emptyCreeds);
-    EEPROM.commit();
-    
-    server.send(500, "application/json", "{\"success\":false,\"error\":\"connection_failed\"}");
-    
-    // Volta para modo AP
-    delay(1000);
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
-    WiFi.softAP(ap_ssid, ap_password);
-    isAPMode = true;
-    
-    Serial.println("Voltou para modo AP");
-    Serial.print("IP: ");
-    Serial.println(WiFi.softAPIP());
-  }
+  server.send(200, "application/json", "{\"success\":true,\"message\":\"wifi_reset\"}");
+  
+  Serial.println("Configurações WiFi limpas!");
+  Serial.println("Reiniciando...");
+  
+  delay(2000);
+  ESP.restart();
 }
 
 void setupPins() {
+  Serial.println("=== Configurando pinos ===");
+  // Configura todos os pinos de LED e garante que estejam apagados
   for (uint8_t i = 0; i < 8; i++) {
     pinMode(ledPins[i], OUTPUT);
-    digitalWrite(ledPins[i], LOW);
+    setLed(i, false); // Apaga todos os LEDs usando a função que trata lógica invertida
   }
+  
+  // Configura buzzer
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
+  Serial.println("Todos os LEDs apagados");
   
-  // Desliga o LED embutido da placa (LOW = aceso, HIGH = apagado no ESP8266)
-  pinMode(ledBuiltIn, OUTPUT);
-  digitalWrite(ledBuiltIn, HIGH);
+  // Teste do buzzer
+  Serial.print("Testando buzzer no pino GPIO");
+  Serial.print(buzzerPin);
+  Serial.println("...");
+  
+  tone(buzzerPin, 1000);
+  delay(200);
+  noTone(buzzerPin);
+  delay(100);
+  tone(buzzerPin, 2000);
+  delay(200);
+  noTone(buzzerPin);
+  
+  Serial.println("✓ Teste do buzzer concluído");
 }
 
+// Adiciona CORS headers a todas as respostas
+void addCORSHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+
 void playConfirmation() {
-  tone(buzzerPin, 2000, 120);
+  // Tom 1
+  tone(buzzerPin, 2000);
   delay(150);
-  tone(buzzerPin, 1500, 120);
-  delay(150);
-  tone(buzzerPin, 2500, 120);
-  delay(100);
   noTone(buzzerPin);
+  delay(50);
+  
+  // Tom 2
+  tone(buzzerPin, 1500);
+  delay(150);
+  noTone(buzzerPin);
+  delay(50);
+  
+  // Tom 3
+  tone(buzzerPin, 2500);
+  delay(150);
+  noTone(buzzerPin);
+}
+
+// Função auxiliar para controlar LEDs com lógica correta
+void setLed(uint8_t ledIndex, bool on) {
+  if (ledIndex > 7) return;
+  
+  uint8_t pin = ledPins[ledIndex];
+  
+  // GPIO2 tem lógica invertida
+  if (pin == 2) {
+    digitalWrite(pin, on ? LOW : HIGH);
+    Serial.print("LED ");
+    Serial.print(ledIndex + 1);
+    Serial.print(" (GPIO2 - invertido): ");
+    Serial.println(on ? "LIGADO (LOW)" : "DESLIGADO (HIGH)");
+  } else {
+    digitalWrite(pin, on ? HIGH : LOW);
+    Serial.print("LED ");
+    Serial.print(ledIndex + 1);
+    Serial.print(": ");
+    Serial.println(on ? "LIGADO" : "DESLIGADO");
+  }
 }
 
 void stopActiveAlarm() {
   if (alarmActive && activeAlarmIdx >= 0) {
-    digitalWrite(ledPins[alarms[activeAlarmIdx].ledIndex], LOW);
+    Serial.println("========================================");
+    Serial.println("✓ ALARME INTERROMPIDO!");
+    Serial.print("Alarme: ");
+    Serial.println(alarms[activeAlarmIdx].name);
+    Serial.println("========================================");
+    
+    setLed(alarms[activeAlarmIdx].ledIndex, false);
   }
   alarmActive = false;
   activeAlarmIdx = -1;
@@ -234,7 +240,10 @@ void startSequenceNow() {
 }
 
 void triggerAlarmStart(uint8_t idx) {
-  if (alarmActive) stopActiveAlarm();
+  if (alarmActive) {
+    Serial.println("Parando alarme ativo anterior...");
+    stopActiveAlarm();
+  }
 
   alarmActive = true;
   activeAlarmIdx = idx;
@@ -243,13 +252,31 @@ void triggerAlarmStart(uint8_t idx) {
   playingSequence = false;
   seqStage = 0;
 
-  digitalWrite(ledPins[alarms[idx].ledIndex], HIGH);
+  setLed(alarms[idx].ledIndex, true);
+  
+  Serial.println("========================================");
+  Serial.println("🔔 ALARME INICIADO!");
+  Serial.print("Nome: ");
+  Serial.println(alarms[idx].name);
+  Serial.print("Horário: ");
+  Serial.print(alarms[idx].hour);
+  Serial.print(":");
+  Serial.println(alarms[idx].minute);
+  Serial.print("LED: ");
+  Serial.println(alarms[idx].ledIndex + 1);
+  Serial.print("Duração: ");
+  Serial.print(alarmDurationMs / 1000);
+  Serial.println(" segundos");
+  Serial.println("========================================");
+  
   startSequenceNow();
 }
 
 void addOrUpdateAlarm() {
+  addCORSHeaders();
+  
   if (!server.hasArg("hour") || !server.hasArg("minute") || !server.hasArg("led")) {
-    server.send(400, "text/plain", "missing");
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"missing_params\"}");
     return;
   }
 
@@ -259,7 +286,7 @@ void addOrUpdateAlarm() {
   const String name = server.hasArg("name") ? server.arg("name") : "Alarme";
 
   if (hour > 23 || minute > 59 || led > 7) {
-    server.send(400, "text/plain", "invalid");
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"invalid_params\"}");
     return;
   }
 
@@ -274,15 +301,16 @@ void addOrUpdateAlarm() {
         alarms[i].ledIndex = led;
         alarms[i].enabled = true;
         strncpy(alarms[i].name, name.c_str(), sizeof(alarms[i].name) - 1);
+        
         playConfirmation();
-        server.send(200, "text/plain", "ok");
+        server.send(200, "application/json", "{\"success\":true,\"message\":\"alarm_updated\"}");
         return;
       }
     }
   }
 
   if (alarmCount >= MAX_ALARMS) {
-    server.send(400, "text/plain", "full");
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"alarm_limit\"}");
     return;
   }
 
@@ -298,20 +326,30 @@ void addOrUpdateAlarm() {
   alarmCount++;
 
   playConfirmation();
-  server.send(200, "text/plain", "ok");
+  server.send(200, "application/json", "{\"success\":true,\"message\":\"alarm_created\"}");
 }
 
 void listAlarms() {
-  char buffer[700];
+  addCORSHeaders();
+  
+  char buffer[1024];
   uint16_t pos = 0;
 
   pos += snprintf(buffer + pos, sizeof(buffer) - pos, "[");
 
   for (uint8_t i = 0; i < alarmCount; i++) {
     Alarm &a = alarms[i];
+    
+    // Formata hour e minute como strings com zero à esquerda
+    char hourStr[3], minStr[3];
+    snprintf(hourStr, sizeof(hourStr), "%02d", a.hour);
+    snprintf(minStr, sizeof(minStr), "%02d", a.minute);
+    
     pos += snprintf(buffer + pos, sizeof(buffer) - pos,
-      "{\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"enabled\":%d,\"name\":\"%s\"}%s",
-      a.id, a.hour, a.minute, a.ledIndex, a.enabled, a.name,
+      "{\"id\":%d,\"hour\":\"%s\",\"minute\":\"%s\",\"led\":%d,\"enabled\":%s,\"name\":\"%s\"}%s",
+      a.id, hourStr, minStr, a.ledIndex, 
+      a.enabled ? "true" : "false", 
+      a.name,
       (i < alarmCount - 1 ? "," : "")
     );
   }
@@ -321,24 +359,33 @@ void listAlarms() {
 }
 
 void handleStatus() {
+  addCORSHeaders();
+  
   time_t now = time(nullptr);
   struct tm* t = localtime(&now);
 
-  String wifiStatus = isAPMode ? "ap_mode" : (WiFi.isConnected() ? "connected" : "disconnected");
+  String wifiStatus = WiFi.isConnected() ? "connected" : "disconnected";
+  String currentIp = WiFi.localIP().toString();
+  String hostname = String(mdnsName) + ".local";
 
-  char out[100];
+  char out[300];
   snprintf(out, sizeof(out),
-           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\",\"ip\":\"%s\"}",
+           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\",\"ip\":\"%s\",\"hostname\":\"%s\",\"ssid\":\"%s\",\"alarmCount\":%d}",
            t->tm_hour, t->tm_min,
            wifiStatus.c_str(),
-           isAPMode ? WiFi.softAPIP().toString().c_str() : WiFi.localIP().toString().c_str());
+           currentIp.c_str(),
+           hostname.c_str(),
+           WiFi.SSID().c_str(),
+           alarmCount);
 
   server.send(200, "application/json", out);
 }
 
 void deleteAlarm() {
+  addCORSHeaders();
+  
   if (!server.hasArg("id")) {
-    server.send(400, "text/plain", "missing");
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"missing_id\"}");
     return;
   }
 
@@ -352,31 +399,89 @@ void deleteAlarm() {
   }
 
   alarmCount = w;
+  
   playConfirmation();
-  server.send(200, "text/plain", "ok");
+  server.send(200, "application/json", "{\"success\":true,\"message\":\"alarm_deleted\"}");
 }
 
 void setup() {
   Serial.begin(115200);
   delay(200);
+  
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("    MEDTIME - Sistema de Alarmes");
+  Serial.println("    Versão 2.0 - WiFiManager + mDNS");
+  Serial.println("========================================");
 
   setupPins();
   setupWiFi();
-
+  
+  // Configura timezone para GMT-3 (Brasília)
   configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+  // Handler para requisições OPTIONS (CORS preflight)
+  server.onNotFound([]() {
+    if (server.method() == HTTP_OPTIONS) {
+      addCORSHeaders();
+      server.send(204);
+    } else {
+      addCORSHeaders();
+      server.send(404, "application/json", "{\"error\":\"endpoint_not_found\"}");
+    }
+  });
 
   // Endpoints de alarmes
   server.on("/setAlarm", HTTP_POST, addOrUpdateAlarm);
   server.on("/listAlarms", HTTP_GET, listAlarms);
   server.on("/deleteAlarm", HTTP_POST, deleteAlarm);
   
+  // Endpoint para habilitar/desabilitar alarme
+  server.on("/toggleAlarm", HTTP_POST, []() {
+    addCORSHeaders();
+    
+    if (!server.hasArg("id")) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"missing_id\"}");
+      return;
+    }
+
+    uint8_t id = server.arg("id").toInt();
+    
+    for (uint8_t i = 0; i < alarmCount; i++) {
+      if (alarms[i].id == id) {
+        alarms[i].enabled = !alarms[i].enabled;
+        
+        Serial.print("Alarme ");
+        Serial.print(id);
+        Serial.print(alarms[i].enabled ? " ativado" : " desativado");
+        Serial.println();
+        
+        playConfirmation();
+        
+        char response[100];
+        snprintf(response, sizeof(response), 
+                 "{\"success\":true,\"enabled\":%s}", 
+                 alarms[i].enabled ? "true" : "false");
+        server.send(200, "application/json", response);
+        return;
+      }
+    }
+    
+    server.send(404, "application/json", "{\"success\":false,\"error\":\"alarm_not_found\"}");
+  });
+  
   // Endpoints de controle de alarme ativo
   server.on("/stopAlarm", HTTP_POST, []() {
+    addCORSHeaders();
+    
+    Serial.println("Requisição para parar alarme recebida");
     stopActiveAlarm();
-    server.send(200, "application/json", "{\"ok\":true,\"acknowledged\":true}");
+    server.send(200, "application/json", "{\"ok\":true,\"acknowledged\":true,\"success\":true}");
   });
 
   server.on("/active", HTTP_GET, []() {
+    addCORSHeaders();
+    
     if (!alarmActive || activeAlarmIdx < 0) {
       server.send(200, "application/json", "{\"active\":false}");
       return;
@@ -386,73 +491,120 @@ void setup() {
     unsigned long started = alarmStartMs;
     long remaining = (long)alarmDurationMs - (long)(millis() - alarmStartMs);
     if (remaining < 0) remaining = 0;
+    
     char out[300];
     snprintf(out, sizeof(out),
-             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\",\"startedAt\":%lu,\"remainingMs\":%ld,\"acknowledged\":%d}",
-             a.id, a.hour, a.minute, a.ledIndex, a.name, started, remaining, 0);
+             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\",\"startedAt\":%lu,\"remainingMs\":%ld,\"acknowledged\":false}",
+             a.id, a.hour, a.minute, a.ledIndex, a.name, started, remaining);
 
     server.send(200, "application/json", out);
   });
 
   // Endpoints de status e configuração
   server.on("/status", HTTP_GET, handleStatus);
-  server.on("/configure", HTTP_POST, handleConfigure);
+  server.on("/resetWiFi", HTTP_POST, handleResetWiFi);
   
-  // Endpoint para resetar EEPROM
+  // Endpoint para ping/teste de conexão
+  server.on("/ping", HTTP_GET, []() {
+    addCORSHeaders();
+    server.send(200, "application/json", "{\"pong\":true,\"device\":\"ESP8266\",\"version\":\"1.0\"}");
+  });
+  
+  // Endpoint para obter informações do dispositivo
+  server.on("/info", HTTP_GET, []() {
+    addCORSHeaders();
+    
+    char out[300];
+    snprintf(out, sizeof(out),
+             "{\"device\":\"ESP8266\",\"hostname\":\"%s.local\",\"ip\":\"%s\",\"ssid\":\"%s\",\"alarms\":%d,\"maxAlarms\":%d,\"rssi\":%d}",
+             mdnsName,
+             WiFi.localIP().toString().c_str(),
+             WiFi.SSID().c_str(),
+             alarmCount,
+             MAX_ALARMS,
+             WiFi.RSSI());
+    server.send(200, "application/json", out);
+  });
+  
+  // Endpoint para resetar EEPROM (agora reseta WiFiManager)
   server.on("/reset", HTTP_POST, []() {
-    Serial.println("=== Resetando EEPROM ===");
+    addCORSHeaders();
     
-    // Limpa credenciais
-    WiFiCredentials emptyCreeds;
-    memset(&emptyCreeds, 0, sizeof(emptyCreeds));
-    emptyCreeds.configured = false;
-    EEPROM.put(0, emptyCreeds);
-    EEPROM.commit();
+    Serial.println("=== Resetando configurações ===");
     
-    Serial.println("EEPROM limpa!");
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"EEPROM resetada\"}");
+    wifiManager.resetSettings();
     
-    // Toca som de confirmação
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"settings_reset\"}");
+    
     playConfirmation();
     
-    // Reinicia em modo AP
+    Serial.println("Configurações resetadas!");
+    Serial.println("Reiniciando...");
     delay(2000);
     ESP.restart();
+  });
+  
+  // Endpoint para testar buzzer
+  server.on("/testBuzzer", HTTP_GET, []() {
+    addCORSHeaders();
+    
+    Serial.println("=== Teste de Buzzer Solicitado ===");
+    playConfirmation();
+    
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"buzzer_tested\"}");
   });
 
   server.begin();
   
+  Serial.println("========================================");
   Serial.println("=== Servidor HTTP iniciado ===");
-  if (isAPMode) {
-    Serial.println("Aguardando conexão no IP: 192.168.4.1");
-  } else {
-    Serial.print("Servidor disponível em: ");
-    Serial.println(WiFi.localIP());
-  }
+  Serial.print("Acesse: http://");
+  Serial.print(mdnsName);
+  Serial.println(".local");
+  Serial.print("ou IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println("========================================");
 }
  
 void loop() {
   server.handleClient();
+  MDNS.update(); // Mantém mDNS ativo
 
-  // Comando via Serial para resetar EEPROM
+  // Comando via Serial
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     
     if (cmd.equalsIgnoreCase("RESET")) {
       Serial.println("=== Comando RESET recebido ===");
-      Serial.println("Limpando EEPROM...");
+      Serial.println("Resetando configurações WiFi...");
       
-      WiFiCredentials emptyCreeds;
-      memset(&emptyCreeds, 0, sizeof(emptyCreeds));
-      emptyCreeds.configured = false;
-      EEPROM.put(0, emptyCreeds);
-      EEPROM.commit();
+      wifiManager.resetSettings();
       
-      Serial.println("EEPROM limpa!");
-      Serial.println("Reiniciando em modo AP...");
+      Serial.println("Configurações resetadas!");
+      Serial.println("Reiniciando...");
       delay(1000);
       ESP.restart();
+    }
+    else if (cmd.equalsIgnoreCase("STATUS")) {
+      Serial.println("========================================");
+      Serial.println("📊 STATUS DO SISTEMA");
+      Serial.println("========================================");
+      Serial.println("SSID: " + WiFi.SSID());
+      Serial.println("IP: " + WiFi.localIP().toString());
+      Serial.print("Hostname: ");
+      Serial.print(mdnsName);
+      Serial.println(".local");
+      Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+      Serial.println("Alarmes: " + String(alarmCount));
+      Serial.println("Alarme ativo: " + String(alarmActive ? "Sim" : "Não"));
+      Serial.println("Buzzer pino: GPIO" + String(buzzerPin));
+      Serial.println("========================================");
+    }
+    else if (cmd.equalsIgnoreCase("BEEP") || cmd.equalsIgnoreCase("BUZZER")) {
+      Serial.println("=== Testando Buzzer ===");
+      playConfirmation();
+      Serial.println("Teste concluído!");
     }
   }
 
@@ -460,9 +612,10 @@ void loop() {
   struct tm* t = localtime(&now);
   uint16_t today = t->tm_yday;
 
+  // Verifica alarmes configurados
   for (uint8_t i = 0; i < alarmCount; i++) {
     Alarm &a = alarms[i];
-    if (!a.enabled) continue;
+    if (!a.enabled) continue; // Ignora alarmes desabilitados
 
     if (a.hour == t->tm_hour &&
         a.minute == t->tm_min &&
@@ -470,6 +623,16 @@ void loop() {
         a.lastTriggeredDay != today)
     {
       a.lastTriggeredDay = today;
+      
+      Serial.print("🔔 Alarme disparado: ");
+      Serial.print(a.name);
+      Serial.print(" (");
+      Serial.print(a.hour);
+      Serial.print(":");
+      Serial.print(a.minute);
+      Serial.print(") - LED ");
+      Serial.println(a.ledIndex + 1);
+      
       triggerAlarmStart(i);
     }
   }
