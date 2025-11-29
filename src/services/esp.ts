@@ -2,6 +2,16 @@ import axios from 'axios';
 
 export const defaultAP = 'http://192.168.4.1';
 
+// Testa conexão com o ESP
+export async function testConnection(espIp: string): Promise<boolean> {
+    try {
+        const response = await axios.get(`${espIp}/ping`, { timeout: 3000 });
+        return response.data?.pong === true;
+    } catch {
+        return false;
+    }
+}
+
 const axiosInstance = axios.create({
     timeout: 8000,
 });

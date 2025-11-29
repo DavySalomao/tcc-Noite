@@ -9,19 +9,21 @@ export default function ConfigScreen() {
     const [ssid, setSsid] = useState('');
     const [pass, setPass] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    const { espIp, setEspIp, resetToDefault } = useEspIp();
-    const [tempIp, setTempIp] = useState('');
+    const { espIp, setEspIp, resetToDefault, isConnected, testEspConnection, autoDiscoverEsp, discovering } = useEspIp();
     const [wifiMode, setWifiMode] = useState<'ap_mode' | 'connected' | 'unknown'>('unknown');
     const [loading, setLoading] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [editingIp, setEditingIp] = useState(false);
+    const [tempIp, setTempIp] = useState('');
 
     useEffect(() => {
         checkEspStatus();
-        const interval = setInterval(checkEspStatus, 5000); // Aumentado para 5s
+        const interval = setInterval(checkEspStatus, 5000);
         return () => clearInterval(interval);
     }, [espIp]);
 
     useEffect(() => {
-        setTempIp(espIp.replace('http://', ''));
+        setTempIp(espIp.replace('http://', '').replace('https://', ''));
     }, [espIp]);
 
     const checkEspStatus = async () => {
@@ -38,17 +40,8 @@ export default function ConfigScreen() {
     };
 
     const enviar = async () => {
-        if (tempIp.trim() && tempIp !== espIp.replace('http://', '')) {
-            await setEspIp(tempIp.trim());
-            Alert.alert(
-                '✅ IP Atualizado', 
-                `Novo IP salvo: http://${tempIp.trim()}\n\n⚠️ Importante:\n• Certifique-se de estar na mesma rede WiFi do ESP\n• Use o botão "Testar Conexão" para verificar`
-            );
-            return;
-        }
-
         if (!ssid.trim()) {
-            Alert.alert('Atenção', 'Por favor, informe o SSID da rede Wi-Fi ou atualize o IP');
+            Alert.alert('Atenção', 'Por favor, informe o SSID da rede Wi-Fi');
             return;
         }
         
@@ -64,7 +57,7 @@ export default function ConfigScreen() {
                 
                 Alert.alert(
                     '✅ Sucesso', 
-                    `ESP configurado!\n\n📍 Novo IP: http://${newIp}\n\n⚠️ Importante: Conecte seu celular à rede "${ssid}" para usar o app.`,
+                    `ESP configurado!\n\n🌐 Use: medtime.local (mDNS automático)\n📍 Ou IP: http://${newIp}\n\n⚠️ Importante: Conecte seu celular à rede "${ssid}" para usar o app.`,
                     [{ text: 'Entendi' }]
                 );
             } else {
@@ -92,7 +85,7 @@ export default function ConfigScreen() {
                             await resetEsp(espIp);
                             Alert.alert(
                                 '✅ Sucesso',
-                                'ESP resetado! Ele irá reiniciar em modo AP.\n\nReconecte na rede "Medtime" para configurar novamente.',
+                                'ESP resetado! Ele irá reiniciar em modo AP.\n\nReconecte na rede "MedTime" para configurar novamente.\n\nApós configurar, use medtime.local automaticamente.',
                                 [{ text: 'OK', onPress: resetToDefault }]
                             );
                         } catch (e: any) {
@@ -102,6 +95,60 @@ export default function ConfigScreen() {
                 }
             ]
         );
+    };
+
+    const handleTestConnection = async () => {
+        setTesting(true);
+        try {
+            const connected = await testEspConnection();
+            if (connected) {
+                Alert.alert(
+                    '✅ Conexão OK!',
+                    `O ESP está acessível em:\n${espIp}\n\nA comunicação está funcionando corretamente.`
+                );
+            } else {
+                Alert.alert(
+                    '❌ Sem Conexão',
+                    `Não foi possível conectar ao ESP em:\n${espIp}\n\n🔍 Verificações:\n• Celular e ESP na mesma rede WiFi?\n• ESP está ligado?\n• Tente digitar o IP manualmente na tela de configuração`,
+                    [
+                        { text: 'OK', style: 'cancel' },
+                        {
+                            text: 'Ver Serial Monitor',
+                            onPress: () => Alert.alert('Info', 'No Arduino IDE:\n1. Abra Tools > Serial Monitor\n2. Digite: STATUS\n3. Copie o IP mostrado')
+                        }
+                    ]
+                );
+            }
+        } catch (e: any) {
+            Alert.alert('❌ Erro', e?.message || 'Erro ao testar conexão');
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const handleSaveIp = async () => {
+        if (!tempIp.trim()) {
+            Alert.alert('Atenção', 'Por favor, informe o IP ou hostname do ESP');
+            return;
+        }
+
+        const formatted = tempIp.trim();
+        await setEspIp(formatted);
+        setEditingIp(false);
+        
+        // Testa conexão com novo IP
+        const connected = await testEspConnection();
+        if (connected) {
+            Alert.alert(
+                '✅ IP Salvo!',
+                `Endereço atualizado para:\nhttp://${formatted}\n\nConexão testada com sucesso!`
+            );
+        } else {
+            Alert.alert(
+                '⚠️ IP Salvo',
+                `Endereço salvo como:\nhttp://${formatted}\n\nMas não foi possível conectar.\n\nVerifique se o IP está correto e se o ESP está ligado.`
+            );
+        }
     };
 
 
@@ -123,11 +170,11 @@ export default function ConfigScreen() {
                             </Text>
                             <Text style={styles.infoText}>
                                 {wifiMode === 'connected' ? (
-                                    '• O ESP já está conectado à sua rede WiFi!\n• Você pode reconfigurar a rede abaixo se necessário'
+                                    '• O ESP está acessível em medtime.local (mDNS)\n• Funciona automaticamente na mesma rede WiFi!\n• Você pode reconfigurar abaixo se necessário'
                                 ) : wifiMode === 'ap_mode' ? (
-                                    '1. Conecte seu celular à rede "Medtime" (senha: 12345678)\n2. Preencha SSID e senha da sua rede WiFi\n3. Toque em "Enviar Configuração"'
+                                    '1. Conecte seu celular à rede "MedTime" (senha: 12345678)\n2. Preencha SSID e senha da sua rede WiFi\n3. Toque em "Enviar Configuração"\n4. Após conectar, use medtime.local'
                                 ) : (
-                                    '• Atualize o IP do ESP abaixo\n• Ou configure via rede "Medtime" se o ESP estiver em modo AP'
+                                    '• O app usa medtime.local automaticamente\n• Certifique-se de estar na mesma rede WiFi do ESP\n• Ou digite o IP manualmente se necessário'
                                 )}
                             </Text>
                         </View>
@@ -135,28 +182,89 @@ export default function ConfigScreen() {
                 </View>
 
                 <View style={styles.card}>
-                    <Text style={styles.label}>
-                        <Ionicons name="server" size={16} color="#666" /> IP do ESP
-                    </Text>
-                    <View style={styles.inputContainer}>
-                        <Ionicons name="globe-outline" size={20} color="#999" style={styles.inputIcon} />
-                        <TextInput 
-                            style={styles.input} 
-                            value={tempIp} 
-                            onChangeText={setTempIp}
-                            placeholder="Ex: 192.168.0.2"
-                            placeholderTextColor="#999"
-                            keyboardType="numeric"
-                            autoCapitalize="none"
-                        />
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <Text style={styles.label}>
+                            <Ionicons name="server" size={16} color="#666" /> Endereço do ESP
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                            {!editingIp && !discovering && (
+                                <TouchableOpacity onPress={autoDiscoverEsp}>
+                                    <Ionicons name="search" size={20} color="#0066cc" />
+                                </TouchableOpacity>
+                            )}
+                            {!editingIp && (
+                                <TouchableOpacity onPress={() => setEditingIp(true)}>
+                                    <Ionicons name="pencil" size={20} color="#2C674D" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
                     </View>
-                    <Text style={styles.hint}>
-                        {wifiMode === 'connected' 
-                            ? '✅ ESP conectado à rede WiFi' 
-                            : wifiMode === 'ap_mode'
-                            ? '📡 Modo AP - IP padrão: 192.168.4.1'
-                            : 'Digite o IP que aparece no Serial Monitor do Arduino'}
-                    </Text>
+                    
+                    {discovering && (
+                        <View style={styles.discoveryBox}>
+                            <ActivityIndicator size="small" color="#0066cc" />
+                            <Text style={styles.discoveryText}>🔍 Procurando ESP na rede...</Text>
+                        </View>
+                    )}
+                    
+                    {editingIp ? (
+                        <>
+                            <View style={styles.inputContainer}>
+                                <Ionicons name="globe-outline" size={20} color="#999" style={styles.inputIcon} />
+                                <TextInput 
+                                    style={styles.input} 
+                                    value={tempIp} 
+                                    onChangeText={setTempIp}
+                                    placeholder="192.168.0.100 ou medtime.local"
+                                    placeholderTextColor="#999"
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                />
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                                <TouchableOpacity 
+                                    style={[styles.smallBtn, { backgroundColor: '#2C674D', flex: 1 }]} 
+                                    onPress={handleSaveIp}
+                                >
+                                    <Ionicons name="checkmark" size={18} color="#fff" />
+                                    <Text style={styles.smallBtnText}>Salvar</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={[styles.smallBtn, { backgroundColor: '#999', flex: 1 }]} 
+                                    onPress={() => {
+                                        setEditingIp(false);
+                                        setTempIp(espIp.replace('http://', '').replace('https://', ''));
+                                    }}
+                                >
+                                    <Ionicons name="close" size={18} color="#fff" />
+                                    <Text style={styles.smallBtnText}>Cancelar</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </>
+                    ) : (
+                        <>
+                            <View style={[styles.inputContainer, styles.disabledInput]}>
+                                <Ionicons 
+                                    name={isConnected ? "checkmark-circle" : "close-circle"} 
+                                    size={20} 
+                                    color={isConnected ? "#2C674D" : "#dc3545"} 
+                                    style={styles.inputIcon} 
+                                />
+                                <TextInput 
+                                    style={[styles.input, styles.fixedIpText]} 
+                                    value={espIp.replace('http://', '').replace('https://', '')}
+                                    editable={false}
+                                    selectTextOnFocus={false}
+                                />
+                            </View>
+                            <Text style={[styles.hint, !isConnected && styles.errorHint]}>
+                                {isConnected 
+                                    ? '✅ ESP conectado e funcionando!'
+                                    : '⚠️ ESP não encontrado - Toque na lupa 🔍 para buscar ou no lápis ✏️ para editar'
+                                }
+                            </Text>
+                        </>
+                    )}
                 </View>
 
                 <View style={styles.card}>
@@ -335,6 +443,15 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: '#333',
     },
+    disabledInput: {
+        backgroundColor: '#f0f0f0',
+        borderColor: '#d0d0d0',
+    },
+    fixedIpText: {
+        color: '#2C674D',
+        fontWeight: '700',
+        fontSize: 16,
+    },
     eyeBtn: {
         padding: 12,
     },
@@ -343,6 +460,10 @@ const styles = StyleSheet.create({
         color: '#999',
         marginTop: 8,
         fontStyle: 'italic',
+    },
+    errorHint: {
+        color: '#dc3545',
+        fontWeight: '600',
     },
     btn: { 
         backgroundColor: '#2C674D', 
@@ -437,5 +558,54 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontWeight: '700',
         fontSize: 17,
+    },
+    testBtn: {
+        backgroundColor: '#0066cc',
+        padding: 18,
+        borderRadius: 16,
+        alignItems: 'center',
+        flexDirection: 'row',
+        justifyContent: 'center',
+        marginTop: 8,
+        marginBottom: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 5,
+    },
+    testBtnText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 17,
+    },
+    smallBtn: {
+        padding: 12,
+        borderRadius: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+    },
+    smallBtnText: {
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    discoveryBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#e3f2fd',
+        padding: 16,
+        borderRadius: 12,
+        gap: 12,
+        marginBottom: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: '#0066cc',
+    },
+    discoveryText: {
+        fontSize: 14,
+        color: '#0066cc',
+        fontWeight: '600',
     },
 });

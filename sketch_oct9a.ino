@@ -8,16 +8,16 @@ ESP8266WebServer server(80);
 WiFiManager wifiManager;
 
 // Mapeamento dos LEDs aos pinos do ESP8266
-// LED 1 -> D7 (GPIO13)
-// LED 2 -> D4 (GPIO2) - LED embutido, lógica invertida
-// LED 3 -> D2 (GPIO4)
-// LED 4 -> D1 (GPIO5)
-// LED 5 -> D5 (GPIO14)
-// LED 6 -> D6 (GPIO12)
-// LED 7 -> D3 (GPIO0)
-// LED 8 -> D0 (GPIO16)
-const uint8_t ledPins[8] = { 13, 2, 4, 5, 14, 12, 0, 16 };
-const uint8_t buzzerPin = 15;
+// LED 1 -> D6 (GPIO12)
+// LED 2 -> D4 (GPIO2) - LED embutido (lógica normal agora)
+// LED 3 -> D3 (GPIO0)
+// LED 4 -> D0 (GPIO16)
+// LED 5 -> D7 (GPIO13)
+// LED 6 -> D5 (GPIO14)
+// LED 7 -> D2 (GPIO4)
+// LED 8 -> D1 (GPIO5)
+const uint8_t ledPins[8] = { 12, 2, 0, 16, 13, 14, 4, 5 };
+const uint8_t buzzerPin = 15;  // D8 (GPIO15)
 
 // Hostname mDNS
 const char* mdnsName = "medtime";
@@ -52,6 +52,9 @@ void setupWiFi() {
   Serial.println("========================================");
   Serial.println("    MEDTIME - Configuração WiFi");
   Serial.println("========================================");
+  
+  // DESCOMENTE a linha abaixo para FORÇAR o portal na primeira vez (depois comente novamente)
+  // wifiManager.resetSettings();
   
   // Configura o WiFiManager
   wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
@@ -138,31 +141,18 @@ void handleResetWiFi() {
 
 void setupPins() {
   Serial.println("=== Configurando pinos ===");
-  // Configura todos os pinos de LED e garante que estejam apagados
-  for (uint8_t i = 0; i < 8; i++) {
-    pinMode(ledPins[i], OUTPUT);
-    setLed(i, false); // Apaga todos os LEDs usando a função que trata lógica invertida
-  }
   
   // Configura buzzer
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
-  Serial.println("Todos os LEDs apagados");
   
-  // Teste do buzzer
-  Serial.print("Testando buzzer no pino GPIO");
-  Serial.print(buzzerPin);
-  Serial.println("...");
+  // Configura todos os pinos de LED e garante que estejam apagados
+  for (uint8_t i = 0; i < 8; i++) {
+    pinMode(ledPins[i], OUTPUT);
+    digitalWrite(ledPins[i], LOW);
+  }
   
-  tone(buzzerPin, 1000);
-  delay(200);
-  noTone(buzzerPin);
-  delay(100);
-  tone(buzzerPin, 2000);
-  delay(200);
-  noTone(buzzerPin);
-  
-  Serial.println("✓ Teste do buzzer concluído");
+  Serial.println("✓ Pinos configurados");
 }
 
 // Adiciona CORS headers a todas as respostas
@@ -197,21 +187,12 @@ void setLed(uint8_t ledIndex, bool on) {
   if (ledIndex > 7) return;
   
   uint8_t pin = ledPins[ledIndex];
+  digitalWrite(pin, on ? HIGH : LOW);
   
-  // GPIO2 tem lógica invertida
-  if (pin == 2) {
-    digitalWrite(pin, on ? LOW : HIGH);
-    Serial.print("LED ");
-    Serial.print(ledIndex + 1);
-    Serial.print(" (GPIO2 - invertido): ");
-    Serial.println(on ? "LIGADO (LOW)" : "DESLIGADO (HIGH)");
-  } else {
-    digitalWrite(pin, on ? HIGH : LOW);
-    Serial.print("LED ");
-    Serial.print(ledIndex + 1);
-    Serial.print(": ");
-    Serial.println(on ? "LIGADO" : "DESLIGADO");
-  }
+  Serial.print("LED ");
+  Serial.print(ledIndex + 1);
+  Serial.print(": ");
+  Serial.println(on ? "LIGADO" : "DESLIGADO");
 }
 
 void stopActiveAlarm() {
@@ -406,13 +387,20 @@ void deleteAlarm() {
 
 void setup() {
   Serial.begin(115200);
-  delay(200);
   
+  // Aguarda conexão serial (máximo 3 segundos)
+  for (int i = 0; i < 30 && !Serial; i++) {
+    delay(100);
+  }
+  
+  Serial.println();
+  Serial.println();
   Serial.println();
   Serial.println("========================================");
   Serial.println("    MEDTIME - Sistema de Alarmes");
   Serial.println("    Versão 2.0 - WiFiManager + mDNS");
   Serial.println("========================================");
+  Serial.flush(); // Garante que dados sejam enviados
 
   setupPins();
   setupWiFi();
@@ -544,16 +532,6 @@ void setup() {
     ESP.restart();
   });
   
-  // Endpoint para testar buzzer
-  server.on("/testBuzzer", HTTP_GET, []() {
-    addCORSHeaders();
-    
-    Serial.println("=== Teste de Buzzer Solicitado ===");
-    playConfirmation();
-    
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"buzzer_tested\"}");
-  });
-
   server.begin();
   
   Serial.println("========================================");
@@ -598,13 +576,7 @@ void loop() {
       Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
       Serial.println("Alarmes: " + String(alarmCount));
       Serial.println("Alarme ativo: " + String(alarmActive ? "Sim" : "Não"));
-      Serial.println("Buzzer pino: GPIO" + String(buzzerPin));
       Serial.println("========================================");
-    }
-    else if (cmd.equalsIgnoreCase("BEEP") || cmd.equalsIgnoreCase("BUZZER")) {
-      Serial.println("=== Testando Buzzer ===");
-      playConfirmation();
-      Serial.println("Teste concluído!");
     }
   }
 
