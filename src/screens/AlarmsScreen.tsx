@@ -4,9 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import { useFocusEffect } from '@react-navigation/native';
 import AlarmModal from '../components/AlarmModal';
 import { setAlarm, deleteAlarm, getActive, stopAlarm } from '../services/esp';
 import { useEspIp } from '../hooks/useEspIp';
+import { useWhatsApp } from '../hooks/useWhatsApp';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 type AlarmType = { id: number; hour: string; minute: string; name: string; led: number; enabled: boolean };
@@ -21,6 +23,7 @@ export default function AlarmsScreen({ navigation }: any) {
     const [alarms, setAlarms] = useState<AlarmType[]>([]);
     const [alerts, setAlerts] = useState<AlertItem[]>([]);
     const { espIp } = useEspIp();
+    const { loadConfig, notifyAlarmCreated, notifyAlarmActive, notifyAlarmAcknowledged } = useWhatsApp();
 
     const [horaAtual, setHoraAtual] = useState('--:--');
     const [status, setStatus] = useState('Verificando');
@@ -57,6 +60,7 @@ export default function AlarmsScreen({ navigation }: any) {
         })();
 
         loadData();
+        loadConfig(); // Carrega configurações do WhatsApp
         failureCountRef.current = 0;
         setStatus('Verificando');
         pollActive();
@@ -74,6 +78,13 @@ export default function AlarmsScreen({ navigation }: any) {
             clearInterval(statusInterval);
         };
     }, [espIp]);
+
+    // Recarrega configurações do WhatsApp quando a tela ganhar foco
+    useFocusEffect(
+        useCallback(() => {
+            loadConfig();
+        }, [loadConfig])
+    );
 
     const loadData = useCallback(async () => {
         try {
@@ -167,6 +178,9 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             await setAlarm(espIp, novo.hour, novo.minute, novo.led, novo.name);
             await pushAlert('Alarme criado', `${novo.name} às ${novo.hour}:${novo.minute} - LED ${novo.led + 1}`);
+            
+            // Notifica via WhatsApp
+            notifyAlarmCreated(novo.name, novo.hour, novo.minute);
         } catch (error: any) {
             Alert.alert('Erro', `Falha ao enviar alarme ao ESP: ${error.message}`);
             return;
@@ -231,6 +245,11 @@ export default function AlarmsScreen({ navigation }: any) {
                     const msg = `Hora do remédio "${res.data.name}", LED ${res.data.led + 1}.`;
                     await pushAlert('Alerta de remédio', msg);
                     
+                    // Notifica via WhatsApp
+                    const hour = res.data.hour?.toString().padStart(2, '0') || '00';
+                    const minute = res.data.minute?.toString().padStart(2, '0') || '00';
+                    notifyAlarmActive(res.data.name, hour, minute);
+                    
                     try {
                         await Notifications.scheduleNotificationAsync({ 
                             content: { 
@@ -263,9 +282,14 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const res = await stopAlarm(espIp, id);
             if (res?.data && (res.data.ok || res.status === 200)) {
+                const alarmName = activeAlarm?.name || 'Alarme';
                 setActiveAlarm(null);
                 activeFetchedRef.current = null;
                 await pushAlert('Alarme confirmado', 'Confirmado');
+                
+                // Notifica via WhatsApp
+                notifyAlarmAcknowledged(alarmName);
+                
                 Alert.alert('Confirmado', 'Alarme interrompido.');
             } else {
                 throw new Error('Resposta inválida do ESP');
@@ -273,7 +297,7 @@ export default function AlarmsScreen({ navigation }: any) {
         } catch {
             Alert.alert('Erro', 'Falha ao confirmar alarme.');
         }
-    }, [espIp, pushAlert]);
+    }, [espIp, pushAlert, activeAlarm, notifyAlarmAcknowledged]);
 
     useEffect(() => {
         if (activeAlarm?.remainingMs != null) {
@@ -373,9 +397,14 @@ export default function AlarmsScreen({ navigation }: any) {
                         </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity onPress={() => navigation.navigate('Config')} style={styles.gearBtn}>
-                        <Ionicons name="settings" size={24} color="#fff" />
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity onPress={() => navigation.navigate('WhatsAppConfig')} style={styles.whatsappBtn}>
+                            <Ionicons name="logo-whatsapp" size={24} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => navigation.navigate('Config')} style={styles.gearBtn}>
+                            <Ionicons name="settings" size={24} color="#fff" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {activeAlarm && (
@@ -528,6 +557,7 @@ const styles = StyleSheet.create({
     tabActive: { backgroundColor: '#41A579' },
     tabText: { color: '#e0e0e0', fontWeight: '600', fontSize: 14 },
     tabTextActive: { color: '#fff', fontWeight: '700' },
+    whatsappBtn: { padding: 8 },
     gearBtn: { padding: 8 },
 
     activeBanner: {
