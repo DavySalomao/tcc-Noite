@@ -136,7 +136,6 @@ export default function ConfigScreen() {
         await setEspIp(formatted);
         setEditingIp(false);
         
-        // Testa conexão com novo IP
         const connected = await testEspConnection();
         if (connected) {
             Alert.alert(

@@ -9,17 +9,16 @@ WiFiManager wifiManager;
 
 // Mapeamento dos LEDs aos pinos do ESP8266
 // LED 1 -> D6 (GPIO12)
-// LED 2 -> D4 (GPIO2) - LED embutido (lógica normal agora)
+// LED 2 -> D4 (GPIO2)
 // LED 3 -> D3 (GPIO0)
 // LED 4 -> D0 (GPIO16)
 // LED 5 -> D7 (GPIO13)
 // LED 6 -> D5 (GPIO14)
 // LED 7 -> D2 (GPIO4)
 // LED 8 -> D1 (GPIO5)
-const uint8_t ledPins[8] = { 12, 2, 0, 16, 13, 14, 4, 5 };
-const uint8_t buzzerPin = 15;  // D8 (GPIO15)
 
-// Hostname mDNS
+const uint8_t ledPins[8] = { 12, 2, 0, 16, 13, 14, 4, 5 };
+const uint8_t buzzerPin = 15; 
 const char* mdnsName = "medtime";
 
 struct Alarm {
@@ -53,10 +52,6 @@ void setupWiFi() {
   Serial.println("    MEDTIME - Configuração WiFi");
   Serial.println("========================================");
   
-  // DESCOMENTE a linha abaixo para FORÇAR o portal na primeira vez (depois comente novamente)
-  // wifiManager.resetSettings();
-  
-  // Configura o WiFiManager
   wifiManager.setAPCallback([](WiFiManager *myWiFiManager) {
     Serial.println("📡 Modo de configuração ativado!");
     Serial.println("========================================");
@@ -65,7 +60,6 @@ void setupWiFi() {
     Serial.println("Configure sua rede WiFi");
     Serial.println("========================================");
     
-    // Toca buzzer para indicar modo de configuração
     tone(buzzerPin, 1000);
     delay(200);
     noTone(buzzerPin);
@@ -80,17 +74,14 @@ void setupWiFi() {
     Serial.println("Conectando à rede...");
   });
   
-  // Timeout de 180 segundos para o portal de configuração
   wifiManager.setConfigPortalTimeout(180);
   
-  // Nome do AP para configuração
   if (!wifiManager.autoConnect("MedTime", "12345678")) {
     Serial.println("✗ Falha ao conectar. Reiniciando...");
     delay(3000);
     ESP.restart();
   }
   
-  // Conectado com sucesso
   Serial.println("========================================");
   Serial.println("✅ CONECTADO À REDE WIFI!");
   Serial.println("========================================");
@@ -103,14 +94,12 @@ void setupWiFi() {
   Serial.println(" dBm");
   Serial.println("========================================");
   
-  // Inicializa mDNS
   if (MDNS.begin(mdnsName)) {
     Serial.println("✓ mDNS iniciado com sucesso!");
     Serial.print("Acesse: http://");
     Serial.print(mdnsName);
     Serial.println(".local");
     
-    // Adiciona serviço HTTP
     MDNS.addService("http", "tcp", 80);
     
     Serial.println("========================================");
@@ -118,11 +107,9 @@ void setupWiFi() {
     Serial.println("✗ Erro ao iniciar mDNS");
   }
   
-  // Toca confirmação de conexão bem-sucedida
   playConfirmation();
 }
 
-// Função para resetar configurações WiFi (via endpoint)
 void handleResetWiFi() {
   addCORSHeaders();
   
@@ -142,11 +129,9 @@ void handleResetWiFi() {
 void setupPins() {
   Serial.println("=== Configurando pinos ===");
   
-  // Configura buzzer
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
   
-  // Configura todos os pinos de LED e garante que estejam apagados
   for (uint8_t i = 0; i < 8; i++) {
     pinMode(ledPins[i], OUTPUT);
     digitalWrite(ledPins[i], LOW);
@@ -155,7 +140,6 @@ void setupPins() {
   Serial.println("✓ Pinos configurados");
 }
 
-// Adiciona CORS headers a todas as respostas
 void addCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -182,7 +166,6 @@ void playConfirmation() {
   noTone(buzzerPin);
 }
 
-// Função auxiliar para controlar LEDs com lógica correta
 void setLed(uint8_t ledIndex, bool on) {
   if (ledIndex > 7) return;
   
@@ -321,7 +304,6 @@ void listAlarms() {
   for (uint8_t i = 0; i < alarmCount; i++) {
     Alarm &a = alarms[i];
     
-    // Formata hour e minute como strings com zero à esquerda
     char hourStr[3], minStr[3];
     snprintf(hourStr, sizeof(hourStr), "%02d", a.hour);
     snprintf(minStr, sizeof(minStr), "%02d", a.minute);
@@ -387,8 +369,7 @@ void deleteAlarm() {
 
 void setup() {
   Serial.begin(115200);
-  
-  // Aguarda conexão serial (máximo 3 segundos)
+
   for (int i = 0; i < 30 && !Serial; i++) {
     delay(100);
   }
@@ -400,15 +381,13 @@ void setup() {
   Serial.println("    MEDTIME - Sistema de Alarmes");
   Serial.println("    Versão 2.0 - WiFiManager + mDNS");
   Serial.println("========================================");
-  Serial.flush(); // Garante que dados sejam enviados
+  Serial.flush(); 
 
   setupPins();
   setupWiFi();
   
-  // Configura timezone para GMT-3 (Brasília)
   configTime(-3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
-  // Handler para requisições OPTIONS (CORS preflight)
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
       addCORSHeaders();
@@ -419,12 +398,10 @@ void setup() {
     }
   });
 
-  // Endpoints de alarmes
   server.on("/setAlarm", HTTP_POST, addOrUpdateAlarm);
   server.on("/listAlarms", HTTP_GET, listAlarms);
   server.on("/deleteAlarm", HTTP_POST, deleteAlarm);
   
-  // Endpoint para habilitar/desabilitar alarme
   server.on("/toggleAlarm", HTTP_POST, []() {
     addCORSHeaders();
     
@@ -458,7 +435,6 @@ void setup() {
     server.send(404, "application/json", "{\"success\":false,\"error\":\"alarm_not_found\"}");
   });
   
-  // Endpoints de controle de alarme ativo
   server.on("/stopAlarm", HTTP_POST, []() {
     addCORSHeaders();
     
@@ -488,17 +464,14 @@ void setup() {
     server.send(200, "application/json", out);
   });
 
-  // Endpoints de status e configuração
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/resetWiFi", HTTP_POST, handleResetWiFi);
   
-  // Endpoint para ping/teste de conexão
   server.on("/ping", HTTP_GET, []() {
     addCORSHeaders();
     server.send(200, "application/json", "{\"pong\":true,\"device\":\"ESP8266\",\"version\":\"1.0\"}");
   });
   
-  // Endpoint para obter informações do dispositivo
   server.on("/info", HTTP_GET, []() {
     addCORSHeaders();
     
@@ -514,7 +487,6 @@ void setup() {
     server.send(200, "application/json", out);
   });
   
-  // Endpoint para resetar EEPROM (agora reseta WiFiManager)
   server.on("/reset", HTTP_POST, []() {
     addCORSHeaders();
     
@@ -546,9 +518,8 @@ void setup() {
  
 void loop() {
   server.handleClient();
-  MDNS.update(); // Mantém mDNS ativo
+  MDNS.update(); 
 
-  // Comando via Serial
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
@@ -584,10 +555,9 @@ void loop() {
   struct tm* t = localtime(&now);
   uint16_t today = t->tm_yday;
 
-  // Verifica alarmes configurados
   for (uint8_t i = 0; i < alarmCount; i++) {
     Alarm &a = alarms[i];
-    if (!a.enabled) continue; // Ignora alarmes desabilitados
+    if (!a.enabled) continue; 
 
     if (a.hour == t->tm_hour &&
         a.minute == t->tm_min &&

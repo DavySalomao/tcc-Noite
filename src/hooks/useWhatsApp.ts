@@ -28,7 +28,6 @@ export const useWhatsApp = () => {
   });
   const [loading, setLoading] = useState(false);
 
-  // Carrega configurações salvas
   const loadConfig = useCallback(async () => {
     try {
       const [enabled, phone, notifyCreate, notifyActive, notifyAck] = await Promise.all([
@@ -53,7 +52,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Salva configuração de ativação
   const setEnabled = useCallback(async (enabled: boolean) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.ENABLED, enabled.toString());
@@ -63,7 +61,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Salva número de telefone
   const setPhoneNumber = useCallback(async (phoneNumber: string) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.PHONE, phoneNumber);
@@ -73,7 +70,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Configura notificação ao criar alarme
   const setNotifyOnCreate = useCallback(async (notify: boolean) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.NOTIFY_CREATE, notify.toString());
@@ -83,7 +79,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Configura notificação quando alarme toca
   const setNotifyOnActive = useCallback(async (notify: boolean) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.NOTIFY_ACTIVE, notify.toString());
@@ -93,7 +88,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Configura notificação ao confirmar alarme
   const setNotifyOnAcknowledge = useCallback(async (notify: boolean) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.NOTIFY_ACK, notify.toString());
@@ -103,7 +97,6 @@ export const useWhatsApp = () => {
     }
   }, []);
 
-  // Envia mensagem de teste
   const sendTestMessage = useCallback(async () => {
     if (!config.enabled) return false;
     
@@ -116,7 +109,6 @@ export const useWhatsApp = () => {
     }
   }, [config.enabled, config.phoneNumber]);
 
-  // Notifica criação de alarme
   const notifyAlarmCreated = useCallback(async (alarmName: string, hour: string, minute: string) => {
     if (!config.enabled || !config.notifyOnCreate) {
       return;
@@ -125,7 +117,6 @@ export const useWhatsApp = () => {
     await whatsappService.notifyAlarmCreated(alarmName, hour, minute, config.phoneNumber);
   }, [config]);
 
-  // Notifica alarme ativo
   const notifyAlarmActive = useCallback(async (alarmName: string, hour: string, minute: string) => {
     if (!config.enabled || !config.notifyOnActive) {
       return;
@@ -134,7 +125,6 @@ export const useWhatsApp = () => {
     await whatsappService.notifyAlarmActive(alarmName, hour, minute, config.phoneNumber);
   }, [config]);
 
-  // Notifica alarme confirmado
   const notifyAlarmAcknowledged = useCallback(async (alarmName: string) => {
     if (!config.enabled || !config.notifyOnAcknowledge) {
       return;

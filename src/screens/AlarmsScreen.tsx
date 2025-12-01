@@ -42,8 +42,7 @@ export default function AlarmsScreen({ navigation }: any) {
 
     useEffect(() => {
         (async () => {
-            // Configura canal de notificação apenas para Android
-            if (Device.osName === 'Android') {
+           if (Device.osName === 'Android') {
                 try {
                     await Notifications.setNotificationChannelAsync('default', { 
                         name: 'Alarmes de Medicação', 
@@ -59,7 +58,7 @@ export default function AlarmsScreen({ navigation }: any) {
         })();
 
         loadData();
-        loadConfig(); // Carrega configurações do WhatsApp
+        loadConfig(); 
         failureCountRef.current = 0;
         setStatus('Verificando');
         pollActive();
@@ -69,7 +68,6 @@ export default function AlarmsScreen({ navigation }: any) {
             setHoraAtual(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
         }, 1000);
         
-        // Verifica status do ESP a cada 500ms para resposta mais rápida
         const statusInterval = setInterval(() => { pollActive(); }, 500);
         
         return () => {
@@ -93,7 +91,6 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             setAlarms(next);
             await AsyncStorage.setItem(STORAGE_KEYS.ALARMS, JSON.stringify(next));
-            // Removido enviarProximo - agora cada alarme é enviado individualmente quando criado
         } catch { }
     }, []);
 
@@ -171,7 +168,6 @@ export default function AlarmsScreen({ navigation }: any) {
             await setAlarm(espIp, novo.hour, novo.minute, novo.led, novo.name);
             await pushAlert('Alarme criado', `${novo.name} às ${novo.hour}:${novo.minute} - LED ${novo.led + 1}`);
             
-            // Notifica via WhatsApp
             notifyAlarmCreated(novo.name, novo.hour, novo.minute);
         } catch (error: any) {
             Alert.alert('Erro', `Falha ao enviar alarme ao ESP: ${error.message}`);
@@ -224,7 +220,6 @@ export default function AlarmsScreen({ navigation }: any) {
         try {
             const res = await getActive(espIp);
             
-            // Se conseguiu conectar, marca como conectado
             if (res.status === 200) {
                 setStatus('Conectado');
             }
@@ -237,7 +232,6 @@ export default function AlarmsScreen({ navigation }: any) {
                     const msg = `Hora do remédio "${res.data.name}", LED ${res.data.led + 1}.`;
                     await pushAlert('Alerta de remédio', msg);
                     
-                    // Notifica via WhatsApp
                     const hour = res.data.hour?.toString().padStart(2, '0') || '00';
                     const minute = res.data.minute?.toString().padStart(2, '0') || '00';
                     notifyAlarmActive(res.data.name, hour, minute);
@@ -265,7 +259,6 @@ export default function AlarmsScreen({ navigation }: any) {
                 setActiveAlarm(null);
             }
         } catch (err: any) {
-            // Se falhou ao conectar, atualiza status
             setStatus('ESP desconectado');
         }
     }, [espIp, pushAlert]);
@@ -279,7 +272,6 @@ export default function AlarmsScreen({ navigation }: any) {
                 activeFetchedRef.current = null;
                 await pushAlert('Alarme confirmado', 'Confirmado');
                 
-                // Notifica via WhatsApp
                 notifyAlarmAcknowledged(alarmName);
                 
                 Alert.alert('Confirmado', 'Alarme interrompido.');

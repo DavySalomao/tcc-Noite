@@ -77,7 +77,6 @@ export default function WhatsAppConfigScreen() {
         </Text>
       </View>
 
-      {/* Ativar/Desativar WhatsApp */}
       <View style={styles.section}>
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
@@ -89,13 +88,12 @@ export default function WhatsAppConfigScreen() {
           <Switch
             value={config.enabled}
             onValueChange={setEnabled}
-            trackColor={{ false: '#767577', true: '#34D399' }}
-            thumbColor={config.enabled ? '#10B981' : '#f4f3f4'}
+            trackColor={{ false: '#767577', true: '#41A579' }}
+            thumbColor={config.enabled ? '#2C674D' : '#f4f3f4'}
           />
         </View>
       </View>
 
-      {/* Número de Telefone */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📱 Número de Telefone</Text>
         <Text style={styles.sectionDescription}>
@@ -120,7 +118,6 @@ export default function WhatsAppConfigScreen() {
         </View>
       </View>
 
-      {/* Tipos de Notificação */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>🔔 Tipos de Notificação</Text>
 
@@ -135,8 +132,8 @@ export default function WhatsAppConfigScreen() {
             value={config.notifyOnCreate}
             onValueChange={setNotifyOnCreate}
             disabled={!config.enabled}
-            trackColor={{ false: '#767577', true: '#34D399' }}
-            thumbColor={config.notifyOnCreate ? '#10B981' : '#f4f3f4'}
+            trackColor={{ false: '#767577', true: '#41A579' }}
+            thumbColor={config.notifyOnCreate ? '#2C674D' : '#f4f3f4'}
           />
         </View>
 
@@ -151,8 +148,8 @@ export default function WhatsAppConfigScreen() {
             value={config.notifyOnActive}
             onValueChange={setNotifyOnActive}
             disabled={!config.enabled}
-            trackColor={{ false: '#767577', true: '#34D399' }}
-            thumbColor={config.notifyOnActive ? '#10B981' : '#f4f3f4'}
+            trackColor={{ false: '#767577', true: '#41A579' }}
+            thumbColor={config.notifyOnActive ? '#2C674D' : '#f4f3f4'}
           />
         </View>
 
@@ -167,25 +164,22 @@ export default function WhatsAppConfigScreen() {
             value={config.notifyOnAcknowledge}
             onValueChange={setNotifyOnAcknowledge}
             disabled={!config.enabled}
-            trackColor={{ false: '#767577', true: '#34D399' }}
-            thumbColor={config.notifyOnAcknowledge ? '#10B981' : '#f4f3f4'}
+            trackColor={{ false: '#767577', true: '#41A579' }}
+            thumbColor={config.notifyOnAcknowledge ? '#2C674D' : '#f4f3f4'}
           />
         </View>
       </View>
 
-      {/* Botão Salvar Configurações */}
       <View style={styles.section}>
         <TouchableOpacity
           style={[styles.saveConfigButton, !config.enabled && styles.saveConfigButtonDisabled]}
           onPress={() => Alert.alert('Salvo!', 'Configurações salvas com sucesso!')}
           disabled={!config.enabled}
         >
-          <Text style={styles.saveConfigButtonIcon}>💾</Text>
           <Text style={styles.saveConfigButtonText}>Salvar Configurações</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Botão de Teste */}
       <View style={styles.section}>
         <TouchableOpacity
           style={[styles.testButton, (!config.enabled || testLoading) && styles.testButtonDisabled]}
@@ -202,7 +196,6 @@ export default function WhatsAppConfigScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Informações */}
       <View style={styles.infoBox}>
         <Text style={styles.infoTitle}>ℹ️ Informações</Text>
         <Text style={styles.infoText}>
@@ -222,9 +215,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   header: {
-    backgroundColor: '#25D366',
+    backgroundColor: '#2C674D',
     padding: 20,
-    paddingTop: 60,
   },
   headerTitle: {
     fontSize: 24,
@@ -290,7 +282,7 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     marginLeft: 10,
-    backgroundColor: '#10B981',
+    backgroundColor: '#2C674D',
     padding: 12,
     borderRadius: 8,
     width: 50,
@@ -304,7 +296,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   saveConfigButton: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#2C674D',
     padding: 15,
     borderRadius: 10,
     flexDirection: 'row',
@@ -324,7 +316,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   testButton: {
-    backgroundColor: '#25D366',
+    backgroundColor: '#2C674D',
     padding: 15,
     borderRadius: 10,
     flexDirection: 'row',

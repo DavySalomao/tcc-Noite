@@ -2,7 +2,6 @@ import axios from 'axios';
 
 export const defaultAP = 'http://192.168.4.1';
 
-// Testa conexão com o ESP
 export async function testConnection(espIp: string): Promise<boolean> {
     try {
         const response = await axios.get(`${espIp}/ping`, { timeout: 3000 });
@@ -67,7 +66,6 @@ export async function getStatus(espIp: string) {
 
 export async function getActive(espIp: string) {
     const base = espIp || defaultAP;
-    // Active check sem retry para polling rápido, com timeout reduzido para 2s
     return axiosInstance.get(`${base}/active`, { timeout: 2000 });
 }
 

@@ -15,7 +15,6 @@ export const useMdnsDiscovery = () => {
   const [espDevice, setEspDevice] = useState<DiscoveredDevice | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Testa se um IP responde ao endpoint /ping do ESP
   const testEspAtIp = async (ip: string): Promise<boolean> => {
     try {
       const response = await axios.get(`http://${ip}/ping`, { timeout: 2500 });
@@ -25,7 +24,6 @@ export const useMdnsDiscovery = () => {
     }
   };
 
-  // Obtém informações do ESP descoberto
   const getEspInfo = async (ip: string): Promise<DiscoveredDevice | null> => {
     try {
       const response = await axios.get(`http://${ip}/info`, { timeout: 2000 });
@@ -38,7 +36,6 @@ export const useMdnsDiscovery = () => {
         };
       }
     } catch {
-      // Se /info falhar, retorna info básica
       return {
         name: 'MedTime ESP8266',
         host: ip,
@@ -69,15 +66,15 @@ export const useMdnsDiscovery = () => {
       const baseIp = `${parts[0]}.${parts[1]}.${parts[2]}`;
 
       const commonLastOctets = [100, 3, 2, 1, 101, 50, 10, 20, 30, 99, 254, 4, 5, 11, 12, 13];
-      
+
       let found = false;
       for (const lastOctet of commonLastOctets) {
         if (found) break;
-        
+
         const testIp = `${baseIp}.${lastOctet}`;
-        
+
         if (testIp === ip) continue;
-        
+
         const isEsp = await testEspAtIp(testIp);
         if (isEsp) {
           const deviceInfo = await getEspInfo(testIp);
@@ -104,7 +101,7 @@ export const useMdnsDiscovery = () => {
           const promises = batch.map(async (lastOctet) => {
             const testIp = `${baseIp}.${lastOctet}`;
             if (testIp === ip) return;
-            
+
             const isEsp = await testEspAtIp(testIp);
             if (isEsp) {
               const deviceInfo = await getEspInfo(testIp);
@@ -136,7 +133,6 @@ export const useMdnsDiscovery = () => {
     setDiscovering(false);
   }, []);
 
-  // Retorna URL completa do ESP
   const getEspUrl = useCallback((): string | null => {
     if (!espDevice || !espDevice.addresses || espDevice.addresses.length === 0) {
       return null;
