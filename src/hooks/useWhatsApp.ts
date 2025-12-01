@@ -39,13 +39,15 @@ export const useWhatsApp = () => {
         AsyncStorage.getItem(STORAGE_KEYS.NOTIFY_ACK),
       ]);
 
-      setConfig({
+      const newConfig = {
         enabled: enabled === 'true',
         phoneNumber: phone || '+5517997322355',
-        notifyOnCreate: notifyCreate !== 'false',
-        notifyOnActive: notifyActive !== 'false',
-        notifyOnAcknowledge: notifyAck !== 'false',
-      });
+        notifyOnCreate: notifyCreate === 'true' || notifyCreate === null,
+        notifyOnActive: notifyActive === 'true' || notifyActive === null,
+        notifyOnAcknowledge: notifyAck === 'true' || notifyAck === null,
+      };
+
+      setConfig(newConfig);
     } catch (error) {
       console.error('Erro ao carregar config WhatsApp:', error);
     }
@@ -117,33 +119,27 @@ export const useWhatsApp = () => {
   // Notifica criação de alarme
   const notifyAlarmCreated = useCallback(async (alarmName: string, hour: string, minute: string) => {
     if (!config.enabled || !config.notifyOnCreate) {
-      console.log('WhatsApp: Notificação de criação desabilitada');
       return;
     }
     
-    console.log('WhatsApp: Enviando notificação de alarme criado');
     await whatsappService.notifyAlarmCreated(alarmName, hour, minute, config.phoneNumber);
   }, [config]);
 
   // Notifica alarme ativo
   const notifyAlarmActive = useCallback(async (alarmName: string, hour: string, minute: string) => {
     if (!config.enabled || !config.notifyOnActive) {
-      console.log('WhatsApp: Notificação de alarme ativo desabilitada');
       return;
     }
     
-    console.log('WhatsApp: Enviando notificação de alarme ativo');
     await whatsappService.notifyAlarmActive(alarmName, hour, minute, config.phoneNumber);
   }, [config]);
 
   // Notifica alarme confirmado
   const notifyAlarmAcknowledged = useCallback(async (alarmName: string) => {
     if (!config.enabled || !config.notifyOnAcknowledge) {
-      console.log('WhatsApp: Notificação de confirmação desabilitada');
       return;
     }
     
-    console.log('WhatsApp: Enviando notificação de alarme confirmado');
     await whatsappService.notifyAlarmAcknowledged(alarmName, config.phoneNumber);
   }, [config]);
 

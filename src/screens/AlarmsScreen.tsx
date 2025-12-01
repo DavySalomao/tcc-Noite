@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import { useFocusEffect } from '@react-navigation/native';
 import AlarmModal from '../components/AlarmModal';
 import { setAlarm, deleteAlarm, getActive, stopAlarm } from '../services/esp';
 import { useEspIp } from '../hooks/useEspIp';
@@ -78,13 +77,6 @@ export default function AlarmsScreen({ navigation }: any) {
             clearInterval(statusInterval);
         };
     }, [espIp]);
-
-    // Recarrega configurações do WhatsApp quando a tela ganhar foco
-    useFocusEffect(
-        useCallback(() => {
-            loadConfig();
-        }, [loadConfig])
-    );
 
     const loadData = useCallback(async () => {
         try {

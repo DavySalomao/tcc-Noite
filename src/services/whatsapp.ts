@@ -52,7 +52,7 @@ export const whatsappService = {
   },
 
   /**
-   * Envia notificação quando alarme está tocando (com imagem)
+   * Envia notificação quando alarme está tocando
    */
   async notifyAlarmActive(alarmName: string, hour: string, minute: string, recipient?: string): Promise<boolean> {
     const text = `🔔 *ALARME ATIVO!*\n\n` +
@@ -60,11 +60,7 @@ export const whatsappService = {
                  `⏰ ${hour}:${minute}\n\n` +
                  `⚠️ Não esqueça de tomar seu medicamento!`;
 
-    return this.sendMessage({ 
-      recipient, 
-      text, 
-      imageUrl: ALARM_IMAGE_URL 
-    });
+    return this.sendMessage({ recipient, text });
   },
 
   /**
