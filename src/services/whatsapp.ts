@@ -4,7 +4,8 @@ const TEXTMEBOT_BASE_URL = 'http://api.textmebot.com/send.php';
 const API_KEY = 'qhawSZRKUjPd';
 const DEFAULT_RECIPIENT = '+5517997322355';
 
-const ALARM_IMAGE_URL = 'https://i.imgur.com/jrfyI9B.png';
+
+const ALARM_IMAGE_URL = 'https://i.postimg.cc/tJgJnzNz/Hora-do-Remedio-(1).png';
 
 interface SendMessageParams {
   recipient?: string;

@@ -4,7 +4,7 @@ import { testConnection } from '../services/esp';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
 
 const ESP_IP_KEY = '@medtime_esp_ip';
-const DEFAULT_IP = 'http://medtime.local'; // mDNS automático
+const DEFAULT_IP = 'http://medtime.local'; 
 
 interface EspIpContextData {
     espIp: string;
@@ -24,21 +24,19 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [isConnected, setIsConnected] = useState(false);
     
-    // Hook de descoberta mDNS
     const { discovering, espUrl, startDiscovery, stopDiscovery } = useMdnsDiscovery();
 
     useEffect(() => {
         loadSavedIp();
     }, []);
     
-    // Atualiza IP automaticamente quando ESP é descoberto
     useEffect(() => {
         if (espUrl && espUrl !== espIp) {
             console.log('🎯 ESP descoberto automaticamente:', espUrl);
             setEspIpState(espUrl);
             AsyncStorage.setItem(ESP_IP_KEY, espUrl);
             setIsConnected(true);
-            stopDiscovery(); // Para o scan quando encontrar
+            stopDiscovery(); 
         }
     }, [espUrl]);
 
@@ -47,16 +45,13 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
             const saved = await AsyncStorage.getItem(ESP_IP_KEY);
             if (saved) {
                 setEspIpState(saved);
-                // Testa conexão com o IP salvo
                 const connected = await testConnection(saved);
                 setIsConnected(connected);
                 
-                // Se não conectar com IP salvo, inicia descoberta automática
                 if (!connected) {
                     console.log('⚠️ IP salvo não está acessível, iniciando busca automática...');
                     startDiscovery();
                     
-                    // Para o scan após 15 segundos
                     setTimeout(() => {
                         stopDiscovery();
                         setLoading(false);
@@ -65,11 +60,9 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
                     setLoading(false);
                 }
             } else {
-                // Primeira vez: inicia descoberta automática
                 console.log('🔍 Primeira vez, buscando ESP automaticamente...');
                 startDiscovery();
                 
-                // Para o scan após 15 segundos
                 setTimeout(() => {
                     stopDiscovery();
                     setLoading(false);
@@ -84,7 +77,6 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
         console.log('🔄 Iniciando descoberta manual...');
         startDiscovery();
         
-        // Para automaticamente após 20 segundos
         setTimeout(() => {
             stopDiscovery();
         }, 20000);
@@ -102,7 +94,6 @@ export function EspIpProvider({ children }: { children: ReactNode }) {
             await AsyncStorage.setItem(ESP_IP_KEY, formattedIp);
             setEspIpState(formattedIp);
             
-            // Testa conexão com novo IP
             const connected = await testConnection(formattedIp);
             setIsConnected(connected);
         } catch { }
