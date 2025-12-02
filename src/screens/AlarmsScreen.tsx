@@ -405,7 +405,7 @@ export default function AlarmsScreen({ navigation }: any) {
                     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
                         <View style={styles.headerCard}>
                             <Image source={require('../../assets/images/logoTeste.png')} style={styles.logo} />
-                            <Text style={styles.subtitle}>Seu assistente de medicação</Text>
+                            <Text style={styles.subtitle}>Caixa organizadora de remédios inteligente</Text>
                             
                             <View style={styles.statusCard}>
                                 <View style={styles.statusRow}>
