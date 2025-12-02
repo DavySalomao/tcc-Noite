@@ -115,7 +115,7 @@ export const useWhatsApp = () => {
     }
     
     await whatsappService.notifyAlarmCreated(alarmName, hour, minute, config.phoneNumber);
-  }, [config]);
+  }, [config.enabled, config.notifyOnCreate, config.phoneNumber]);
 
   const notifyAlarmActive = useCallback(async (alarmName: string, hour: string, minute: string) => {
     if (!config.enabled || !config.notifyOnActive) {
@@ -123,7 +123,7 @@ export const useWhatsApp = () => {
     }
     
     await whatsappService.notifyAlarmActive(alarmName, hour, minute, config.phoneNumber);
-  }, [config]);
+  }, [config.enabled, config.notifyOnActive, config.phoneNumber]);
 
   const notifyAlarmAcknowledged = useCallback(async (alarmName: string) => {
     if (!config.enabled || !config.notifyOnAcknowledge) {
@@ -131,7 +131,7 @@ export const useWhatsApp = () => {
     }
     
     await whatsappService.notifyAlarmAcknowledged(alarmName, config.phoneNumber);
-  }, [config]);
+  }, [config.enabled, config.notifyOnAcknowledge, config.phoneNumber]);
 
   return {
     config,
