@@ -2,8 +2,6 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, Text, TouchableOpacity, FlatList, Alert, StyleSheet, Switch, Image, ScrollView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
 import AlarmModal from '../components/AlarmModal';
 import { setAlarm, deleteAlarm, getActive, stopAlarm } from '../services/esp';
 import { useEspIp } from '../hooks/useEspIp';
@@ -41,22 +39,6 @@ export default function AlarmsScreen({ navigation }: any) {
     const [activeAlarm, setActiveAlarm] = useState<any>(null);
 
     useEffect(() => {
-        (async () => {
-           if (Device.osName === 'Android') {
-                try {
-                    await Notifications.setNotificationChannelAsync('default', { 
-                        name: 'Alarmes de Medicação', 
-                        importance: Notifications.AndroidImportance.HIGH, 
-                        sound: 'default',
-                        vibrationPattern: [0, 250, 250, 250],
-                        enableVibrate: true,
-                    });
-                } catch (e) {
-                    console.log('Erro ao configurar canal de notificação:', e);
-                }
-            }
-        })();
-
         loadData();
         loadConfig(); 
         failureCountRef.current = 0;
@@ -176,7 +158,7 @@ export default function AlarmsScreen({ navigation }: any) {
         
         await saveAlarms([...alarms, novo]);
         setShowModal(false);
-    }, [tempHour, tempMinute, tempName, tempLed, alarms, saveAlarms, espIp, pushAlert]);
+    }, [tempHour, tempMinute, tempName, tempLed, alarms, saveAlarms, espIp, pushAlert, notifyAlarmCreated]);
 
     const alternarAlarme = useCallback(async (id: number) => {
         const novos = alarms.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a);
@@ -235,18 +217,6 @@ export default function AlarmsScreen({ navigation }: any) {
                     const hour = res.data.hour?.toString().padStart(2, '0') || '00';
                     const minute = res.data.minute?.toString().padStart(2, '0') || '00';
                     notifyAlarmActive(res.data.name, hour, minute);
-                    
-                    try {
-                        await Notifications.scheduleNotificationAsync({ 
-                            content: { 
-                                title: '💊 Hora do Remédio!', 
-                                body: msg, 
-                                sound: 'default',
-                                priority: Notifications.AndroidNotificationPriority.HIGH,
-                            }, 
-                            trigger: null 
-                        });
-                    } catch { }
                 } else if (res.data.acknowledged) {
                     activeFetchedRef.current = null;
                     setActiveAlarm(null);
@@ -274,7 +244,7 @@ export default function AlarmsScreen({ navigation }: any) {
                 
                 notifyAlarmAcknowledged(alarmName);
                 
-                Alert.alert('Confirmado', 'Alarme interrompido.');
+                Alert.alert('Confirmado', `${alarmName} interrompido.`);
             } else {
                 throw new Error('Resposta inválida do ESP');
             }

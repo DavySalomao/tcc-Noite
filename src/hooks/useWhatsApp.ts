@@ -22,9 +22,9 @@ export const useWhatsApp = () => {
   const [config, setConfig] = useState<WhatsAppConfig>({
     enabled: false,
     phoneNumber: '+5517997322355',
-    notifyOnCreate: true,
-    notifyOnActive: true,
-    notifyOnAcknowledge: true,
+    notifyOnCreate: false,
+    notifyOnActive: false,
+    notifyOnAcknowledge: false,
   });
   const [loading, setLoading] = useState(false);
 
@@ -41,9 +41,9 @@ export const useWhatsApp = () => {
       const newConfig = {
         enabled: enabled === 'true',
         phoneNumber: phone || '+5517997322355',
-        notifyOnCreate: notifyCreate === 'true' || notifyCreate === null,
-        notifyOnActive: notifyActive === 'true' || notifyActive === null,
-        notifyOnAcknowledge: notifyAck === 'true' || notifyAck === null,
+        notifyOnCreate: notifyCreate === 'true',
+        notifyOnActive: notifyActive === 'true',
+        notifyOnAcknowledge: notifyAck === 'true',
       };
 
       setConfig(newConfig);

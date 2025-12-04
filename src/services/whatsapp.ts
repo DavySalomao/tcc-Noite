@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const TEXTMEBOT_BASE_URL = 'http://api.textmebot.com/send.php';
-const API_KEY = 'qhawSZRKUjPd';
+const API_KEY = '7JCKcVE5F2du';
 const DEFAULT_RECIPIENT = '+5517997322355';
 
 
@@ -17,6 +17,10 @@ export const whatsappService = {
 
   async sendMessage({ recipient = DEFAULT_RECIPIENT, text, imageUrl }: SendMessageParams): Promise<boolean> {
     try {
+      if (!recipient || recipient.length < 10) {
+        return false;
+      }
+
       const params = new URLSearchParams({
         recipient,
         apikey: API_KEY,
@@ -31,8 +35,7 @@ export const whatsappService = {
       const response = await axios.get(url, { timeout: 10000 });
 
       return response.status === 200;
-    } catch (error) {
-      console.error('Erro ao enviar mensagem WhatsApp:', error);
+    } catch (error: any) {
       return false;
     }
   },

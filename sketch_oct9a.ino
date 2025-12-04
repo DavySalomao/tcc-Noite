@@ -29,6 +29,7 @@ struct Alarm {
   bool enabled;
   int16_t lastTriggeredDay;
   char name[20];
+  bool isActiveNow;
 };
 
 const uint8_t MAX_ALARMS = 16;
@@ -36,7 +37,6 @@ Alarm alarms[MAX_ALARMS];
 uint8_t alarmCount = 0;
 
 bool alarmActive = false;
-int8_t activeAlarmIdx = -1;
 unsigned long alarmStartMs = 0;
 
 const unsigned long alarmDurationMs = 180000UL;
@@ -179,17 +179,22 @@ void setLed(uint8_t ledIndex, bool on) {
 }
 
 void stopActiveAlarm() {
-  if (alarmActive && activeAlarmIdx >= 0) {
-    Serial.println("========================================");
-    Serial.println("✓ ALARME INTERROMPIDO!");
-    Serial.print("Alarme: ");
-    Serial.println(alarms[activeAlarmIdx].name);
-    Serial.println("========================================");
-    
-    setLed(alarms[activeAlarmIdx].ledIndex, false);
+  Serial.println("========================================");
+  Serial.println("✓ PARANDO TODOS OS ALARMES ATIVOS!");
+  
+  // Desliga todos os LEDs dos alarmes ativos
+  for (uint8_t i = 0; i < alarmCount; i++) {
+    if (alarms[i].isActiveNow) {
+      Serial.print("Desligando alarme: ");
+      Serial.println(alarms[i].name);
+      setLed(alarms[i].ledIndex, false);
+      alarms[i].isActiveNow = false;
+    }
   }
+  
+  Serial.println("========================================");
+  
   alarmActive = false;
-  activeAlarmIdx = -1;
   playingSequence = false;
   seqStage = 0;
   noTone(buzzerPin);
@@ -204,18 +209,17 @@ void startSequenceNow() {
 }
 
 void triggerAlarmStart(uint8_t idx) {
-  if (alarmActive) {
-    Serial.println("Parando alarme ativo anterior...");
-    stopActiveAlarm();
+  // Não para alarmes ativos anteriores - permite múltiplos simultâneos
+  
+  if (!alarmActive) {
+    alarmActive = true;
+    alarmStartMs = millis();
+    lastSequenceRepeat = 0;
+    playingSequence = false;
+    seqStage = 0;
   }
 
-  alarmActive = true;
-  activeAlarmIdx = idx;
-  alarmStartMs = millis();
-  lastSequenceRepeat = 0;
-  playingSequence = false;
-  seqStage = 0;
-
+  alarms[idx].isActiveNow = true;
   setLed(alarms[idx].ledIndex, true);
   
   Serial.println("========================================");
@@ -233,7 +237,9 @@ void triggerAlarmStart(uint8_t idx) {
   Serial.println(" segundos");
   Serial.println("========================================");
   
-  startSequenceNow();
+  if (!playingSequence) {
+    startSequenceNow();
+  }
 }
 
 void addOrUpdateAlarm() {
@@ -285,6 +291,7 @@ void addOrUpdateAlarm() {
   a.ledIndex = led;
   a.enabled = true;
   a.lastTriggeredDay = -1;
+  a.isActiveNow = false;
   strncpy(a.name, name.c_str(), sizeof(a.name) - 1);
 
   alarmCount++;
@@ -446,20 +453,46 @@ void setup() {
   server.on("/active", HTTP_GET, []() {
     addCORSHeaders();
     
-    if (!alarmActive || activeAlarmIdx < 0) {
+    if (!alarmActive) {
       server.send(200, "application/json", "{\"active\":false}");
       return;
     }
 
-    Alarm &a = alarms[activeAlarmIdx];
+    // Encontra o primeiro alarme ativo para retornar
+    int8_t firstActiveIdx = -1;
+    for (uint8_t i = 0; i < alarmCount; i++) {
+      if (alarms[i].isActiveNow) {
+        firstActiveIdx = i;
+        break;
+      }
+    }
+    
+    if (firstActiveIdx < 0) {
+      server.send(200, "application/json", "{\"active\":false}");
+      return;
+    }
+
+    Alarm &a = alarms[firstActiveIdx];
     unsigned long started = alarmStartMs;
     long remaining = (long)alarmDurationMs - (long)(millis() - alarmStartMs);
     if (remaining < 0) remaining = 0;
     
-    char out[300];
+    // Conta quantos alarmes estão ativos
+    uint8_t activeCount = 0;
+    String ledList = "[";
+    for (uint8_t i = 0; i < alarmCount; i++) {
+      if (alarms[i].isActiveNow) {
+        if (activeCount > 0) ledList += ",";
+        ledList += String(alarms[i].ledIndex);
+        activeCount++;
+      }
+    }
+    ledList += "]";
+    
+    char out[400];
     snprintf(out, sizeof(out),
-             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\",\"startedAt\":%lu,\"remainingMs\":%ld,\"acknowledged\":false}",
-             a.id, a.hour, a.minute, a.ledIndex, a.name, started, remaining);
+             "{\"active\":true,\"id\":%d,\"hour\":%d,\"minute\":%d,\"led\":%d,\"name\":\"%s\",\"startedAt\":%lu,\"remainingMs\":%ld,\"acknowledged\":false,\"activeCount\":%d,\"activeLeds\":%s}",
+             a.id, a.hour, a.minute, a.ledIndex, a.name, started, remaining, activeCount, ledList.c_str());
 
     server.send(200, "application/json", out);
   });

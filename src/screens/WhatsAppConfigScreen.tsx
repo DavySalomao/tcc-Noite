@@ -36,11 +36,40 @@ export default function WhatsAppConfigScreen() {
     setPhoneInput(config.phoneNumber);
   }, [config.phoneNumber]);
 
-  const handleSavePhone = () => {
-    if (!phoneInput.startsWith('+')) {
-      Alert.alert('Erro', 'O número deve começar com + e o código do país (ex: +5517997322355)');
+  // Formata o número de telefone automaticamente
+  const formatPhoneNumber = (text: string) => {
+    // Remove todos os caracteres que não são números
+    const numbers = text.replace(/\D/g, '');
+    
+    // Se começar com 55, mantém (código do Brasil)
+    // Se não, adiciona 55 no início
+    let formatted = numbers;
+    
+    if (formatted.length === 0) {
+      setPhoneInput('');
       return;
     }
+    
+    // Garante que sempre tenha o + no início
+    formatted = '+' + (formatted.startsWith('55') ? formatted : '55' + formatted);
+    
+    // Limita a 13 caracteres (+55 + 11 dígitos)
+    if (formatted.length > 14) {
+      formatted = formatted.substring(0, 14);
+    }
+    
+    setPhoneInput(formatted);
+  };
+
+  const handleSavePhone = () => {
+    // Remove caracteres não numéricos para validar
+    const numbers = phoneInput.replace(/\D/g, '');
+    
+    if (numbers.length < 12 || numbers.length > 13) {
+      Alert.alert('Erro', 'Número inválido. Formato esperado: +55 + DDD (2 dígitos) + Número (9 dígitos)\nExemplo: +5517997322355');
+      return;
+    }
+    
     setPhoneNumber(phoneInput);
     Alert.alert('Sucesso', 'Número de telefone salvo!');
   };
@@ -97,16 +126,17 @@ export default function WhatsAppConfigScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📱 Número de Telefone</Text>
         <Text style={styles.sectionDescription}>
-          Formato: +55 (código do país) + DDD + número
+          Digite apenas os números. Formato automático: +55 + DDD + número
         </Text>
         <View style={styles.phoneContainer}>
           <TextInput
             style={styles.phoneInput}
             value={phoneInput}
-            onChangeText={setPhoneInput}
+            onChangeText={formatPhoneNumber}
             placeholder="+5517997322355"
-            keyboardType="phone-pad"
+            keyboardType="number-pad"
             editable={config.enabled}
+            maxLength={14}
           />
           <TouchableOpacity
             style={[styles.saveButton, !config.enabled && styles.saveButtonDisabled]}
