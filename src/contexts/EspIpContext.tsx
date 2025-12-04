@@ -4,7 +4,7 @@ import { testConnection } from '../services/esp';
 import { useMdnsDiscovery } from '../hooks/useMdnsDiscovery';
 
 const ESP_IP_KEY = '@medtime_esp_ip';
-const DEFAULT_IP = 'http://medtime.local'; 
+const DEFAULT_IP = 'http://192.168.1.100'; 
 
 interface EspIpContextData {
     espIp: string;

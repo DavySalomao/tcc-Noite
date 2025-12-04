@@ -1,6 +1,5 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
 #include <WiFiManager.h>
 #include <time.h>
 
@@ -12,14 +11,13 @@ WiFiManager wifiManager;
 // LED 2 -> D4 (GPIO2)
 // LED 3 -> D3 (GPIO0)
 // LED 4 -> D0 (GPIO16)
-// LED 5 -> D7 (GPIO13)
+// LED 5 -> D7Q (GPIO13)
 // LED 6 -> D5 (GPIO14)
 // LED 7 -> D2 (GPIO4)
 // LED 8 -> D1 (GPIO5)
 
 const uint8_t ledPins[8] = { 12, 2, 0, 16, 13, 14, 4, 5 };
-const uint8_t buzzerPin = 15; 
-const char* mdnsName = "medtime";
+const uint8_t buzzerPin = 15;
 
 struct Alarm {
   uint8_t id;
@@ -93,19 +91,6 @@ void setupWiFi() {
   Serial.print(WiFi.RSSI());
   Serial.println(" dBm");
   Serial.println("========================================");
-  
-  if (MDNS.begin(mdnsName)) {
-    Serial.println("✓ mDNS iniciado com sucesso!");
-    Serial.print("Acesse: http://");
-    Serial.print(mdnsName);
-    Serial.println(".local");
-    
-    MDNS.addService("http", "tcp", 80);
-    
-    Serial.println("========================================");
-  } else {
-    Serial.println("✗ Erro ao iniciar mDNS");
-  }
   
   playConfirmation();
 }
@@ -336,15 +321,13 @@ void handleStatus() {
 
   String wifiStatus = WiFi.isConnected() ? "connected" : "disconnected";
   String currentIp = WiFi.localIP().toString();
-  String hostname = String(mdnsName) + ".local";
 
   char out[300];
   snprintf(out, sizeof(out),
-           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\",\"ip\":\"%s\",\"hostname\":\"%s\",\"ssid\":\"%s\",\"alarmCount\":%d}",
+           "{\"time\":\"%02d:%02d\",\"wifi\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\",\"alarmCount\":%d}",
            t->tm_hour, t->tm_min,
            wifiStatus.c_str(),
            currentIp.c_str(),
-           hostname.c_str(),
            WiFi.SSID().c_str(),
            alarmCount);
 
@@ -386,7 +369,7 @@ void setup() {
   Serial.println();
   Serial.println("========================================");
   Serial.println("    MEDTIME - Sistema de Alarmes");
-  Serial.println("    Versão 2.0 - WiFiManager + mDNS");
+  Serial.println("    Versão 2.0 - WiFiManager");
   Serial.println("========================================");
   Serial.flush(); 
 
@@ -510,8 +493,7 @@ void setup() {
     
     char out[300];
     snprintf(out, sizeof(out),
-             "{\"device\":\"ESP8266\",\"hostname\":\"%s.local\",\"ip\":\"%s\",\"ssid\":\"%s\",\"alarms\":%d,\"maxAlarms\":%d,\"rssi\":%d}",
-             mdnsName,
+             "{\"device\":\"ESP8266\",\"ip\":\"%s\",\"ssid\":\"%s\",\"alarms\":%d,\"maxAlarms\":%d,\"rssi\":%d}",
              WiFi.localIP().toString().c_str(),
              WiFi.SSID().c_str(),
              alarmCount,
@@ -541,17 +523,13 @@ void setup() {
   
   Serial.println("========================================");
   Serial.println("=== Servidor HTTP iniciado ===");
-  Serial.print("Acesse: http://");
-  Serial.print(mdnsName);
-  Serial.println(".local");
-  Serial.print("ou IP: ");
+  Serial.print("Acesse IP: ");
   Serial.println(WiFi.localIP());
   Serial.println("========================================");
 }
  
 void loop() {
   server.handleClient();
-  MDNS.update(); 
 
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
@@ -574,9 +552,6 @@ void loop() {
       Serial.println("========================================");
       Serial.println("SSID: " + WiFi.SSID());
       Serial.println("IP: " + WiFi.localIP().toString());
-      Serial.print("Hostname: ");
-      Serial.print(mdnsName);
-      Serial.println(".local");
       Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
       Serial.println("Alarmes: " + String(alarmCount));
       Serial.println("Alarme ativo: " + String(alarmActive ? "Sim" : "Não"));
